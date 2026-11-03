@@ -1,0 +1,35 @@
+{
+  "description": "Tasks whose required fields are empty strings. Each task must fail the store's validator with a 'required' error on every required field that is empty. The fixture is the input to a rejection test, not to a rendering test.",
+  "allRequiredEmpty": {
+    "id": "550e8400-e29b-41d4-a716-446655440300",
+    "title": "",
+    "description": "",
+    "creator": "",
+    "assignee": "",
+    "createdAt": "2026-11-03T11:00:00.000Z"
+  },
+  "onlyTitleEmpty": {
+    "id": "550e8400-e29b-41d4-a716-446655440301",
+    "title": "",
+    "description": "Description is present",
+    "creator": "Commander",
+    "assignee": "Geologist",
+    "createdAt": "2026-11-03T11:05:00.000Z"
+  },
+  "onlyCreatorEmpty": {
+    "id": "550e8400-e29b-41d4-a716-446655440302",
+    "title": "Valid title",
+    "description": "",
+    "creator": "",
+    "assignee": "Geologist",
+    "createdAt": "2026-11-03T11:10:00.000Z"
+  },
+  "onlyAssigneeEmpty": {
+    "id": "550e8400-e29b-41d4-a716-446655440303",
+    "title": "Valid title",
+    "description": "",
+    "creator": "Commander",
+    "assignee": "",
+    "createdAt": "2026-11-03T11:15:00.000Z"
+  }
+}

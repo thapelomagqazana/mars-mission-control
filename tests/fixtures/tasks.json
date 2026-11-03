@@ -1,0 +1,63 @@
+{
+  "emptyList": [],
+  "singleTask": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "title": "Survey crater",
+      "description": "Check water ice",
+      "creator": "Commander",
+      "assignee": "Geologist",
+      "createdAt": "2026-11-03T09:00:00.000Z"
+    }
+  ],
+  "threeTasks": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "title": "Survey crater",
+      "description": "Check water ice",
+      "creator": "Commander",
+      "assignee": "Geologist",
+      "createdAt": "2026-11-03T09:00:00.000Z"
+    },
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440002",
+      "title": "Deploy rover",
+      "description": "",
+      "creator": "Commander",
+      "assignee": "Engineer",
+      "createdAt": "2026-11-03T09:05:00.000Z"
+    },
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440003",
+      "title": "Analyse sample",
+      "description": "Mass spectrometry",
+      "creator": "Geologist",
+      "assignee": "Scientist",
+      "createdAt": "2026-11-03T09:10:00.000Z"
+    }
+  ],
+  "invalidTasks": {
+    "notAnArray": {
+      "not": "an array"
+    },
+    "notJson": "{not valid json",
+    "arrayWithOneInvalidEntry": [
+      {
+        "id": "not-a-uuid",
+        "title": "",
+        "description": "",
+        "creator": "",
+        "assignee": "",
+        "createdAt": "not-a-timestamp"
+      },
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440004",
+        "title": "Valid task",
+        "description": "Kept after the invalid entry is filtered",
+        "creator": "Commander",
+        "assignee": "Geologist",
+        "createdAt": "2026-11-03T09:15:00.000Z"
+      }
+    ]
+  }
+}

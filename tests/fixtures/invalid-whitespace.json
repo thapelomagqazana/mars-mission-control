@@ -1,0 +1,43 @@
+{
+  "description": "Tasks whose required fields are whitespace-only strings. The validator trims before checking, so a whitespace-only value is treated the same as an empty one — each of these tasks must fail validation with a 'required' error on every required field that is whitespace-only. The fixture is the input to a rejection test, not a rendering test. It is the sibling of invalid-empty.json: same rule (required means non-empty after trim), different bytes (spaces, tabs, newlines instead of empty strings).",
+  "allRequiredWhitespace": {
+    "id": "550e8400-e29b-41d4-a716-446655440400",
+    "title": "   ",
+    "description": "   ",
+    "creator": "   ",
+    "assignee": "   ",
+    "createdAt": "2026-11-03T12:00:00.000Z"
+  },
+  "onlyTitleWhitespace": {
+    "id": "550e8400-e29b-41d4-a716-446655440401",
+    "title": "   ",
+    "description": "Description is present",
+    "creator": "Commander",
+    "assignee": "Geologist",
+    "createdAt": "2026-11-03T12:05:00.000Z"
+  },
+  "onlyCreatorWhitespace": {
+    "id": "550e8400-e29b-41d4-a716-446655440402",
+    "title": "Valid title",
+    "description": "",
+    "creator": "\t",
+    "assignee": "Geologist",
+    "createdAt": "2026-11-03T12:10:00.000Z"
+  },
+  "onlyAssigneeWhitespace": {
+    "id": "550e8400-e29b-41d4-a716-446655440403",
+    "title": "Valid title",
+    "description": "",
+    "creator": "Commander",
+    "assignee": "\n",
+    "createdAt": "2026-11-03T12:15:00.000Z"
+  },
+  "mixedWhitespace": {
+    "id": "550e8400-e29b-41d4-a716-446655440404",
+    "title": " \t\n ",
+    "description": "\t\t",
+    "creator": " \n",
+    "assignee": "\t ",
+    "createdAt": "2026-11-03T12:20:00.000Z"
+  }
+}

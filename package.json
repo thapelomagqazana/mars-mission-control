@@ -14,8 +14,8 @@
     "mission-control"
   ],
   "engines": {
-    "node": ">=18.20.4 <19",
-    "npm": ">=10.8.2 <11"
+    "node": ">=22.13.0 <23",
+    "npm": ">=10.9.0 <11"
   },
   "main": "src/js/index.js",
   "scripts": {
@@ -29,16 +29,20 @@
     "test:e2e": "cypress run",
     "test:e2e:open": "cypress open",
     "test:e2e:headless": "cypress run --browser chrome --headless",
-    "verify": "npm run lint:syntax && npm run test && npm run build && npm run test:e2e",
-    "lint:syntax": "node --check src/js/index.js && node --check src/js/app.js && node --check src/js/store/schema.js && node --check src/js/store/validators.js && node --check src/js/store/taskStore.js && node --check src/js/store/errors.js && node --check src/js/events/debounce.js && node --check src/js/events/keyboard.js && node --check src/js/events/focus.js && node --check src/js/views/dashboard.js && node --check src/js/views/taskList.js && node --check src/js/views/taskCard.js && node --check src/js/views/emptyState.js && node --check src/js/views/counter.js && node --check src/js/views/search.js && node --check src/js/views/dialog.js && node --check src/js/utils/storage.js && node --check src/js/utils/dom.js",
+    "test:e2e:ci": "cypress run --browser chrome --headless",
+    "test:e2e:report": "cross-env CI=true cypress run --browser chrome --headless",
+    "verify": "npm run verify:cypress && npm run lint:syntax && npm run test && npm run build && npm run test:e2e",
+    "verify:cypress": "bash scripts/verify-cypress.sh",
+    "lint:syntax": "node --check src/js/index.js && ...",
     "check:layers": "bash scripts/check-layers.sh"
   },
   "devDependencies": {
     "@babel/preset-env": "^7.29.7",
     "babel-jest": "^30.5.2",
     "copy-webpack-plugin": "^12.0.2",
+    "cross-env": "10.1.0",
     "css-loader": "^6.10.0",
-    "cypress": "^13.6.4",
+    "cypress": "13.6.4",
     "html-webpack-plugin": "^5.6.0",
     "jest": "^30.5.2",
     "jest-environment-jsdom": "^30.5.2",
@@ -59,12 +63,16 @@
       {
         "displayName": "node",
         "testEnvironment": "node",
-        "testMatch": ["<rootDir>/tests/unit/node/**/*.test.js"]
+        "testMatch": [
+          "<rootDir>/tests/unit/node/**/*.test.js"
+        ]
       },
       {
         "displayName": "jsdom",
         "testEnvironment": "jsdom",
-        "testMatch": ["<rootDir>/tests/unit/jsdom/**/*.test.js"]
+        "testMatch": [
+          "<rootDir>/tests/unit/jsdom/**/*.test.js"
+        ]
       }
     ],
     "collectCoverageFrom": [

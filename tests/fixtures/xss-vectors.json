@@ -1,0 +1,45 @@
+{
+  "description": "Eight XSS payloads (X1–X8) drawn from the OWASP XSS Filter Evasion Cheat Sheet, mapped to the eight vectors in the app's security checklist (8.4.2). Each payload is a string that the app must render as text, never as markup. The fixture is the input to a rendering test: a task whose title, description, creator, or assignee is one of these payloads must display the payload as literal text and must not execute the script, load the image, or navigate the link.",
+  "vectors": {
+    "X1_script_tag": {
+      "label": "Classic script tag",
+      "payload": "<script>alert('X1')</script>",
+      "what_it_would_do_if_markup": "Execute the script when the element is inserted into the DOM."
+    },
+    "X2_img_onerror": {
+      "label": "Image onerror",
+      "payload": "<img src=x onerror=alert('X2')>",
+      "what_it_would_do_if_markup": "Attempt to load a broken image, then execute the onerror handler."
+    },
+    "X3_svg_onload": {
+      "label": "SVG onload",
+      "payload": "<svg onload=alert('X3')>",
+      "what_it_would_do_if_markup": "Execute the onload handler when the SVG is parsed."
+    },
+    "X4_iframe_javascript": {
+      "label": "Iframe with javascript: URL",
+      "payload": "<iframe src=\"javascript:alert('X4')\"></iframe>",
+      "what_it_would_do_if_markup": "Load an iframe whose src is a javascript: URL, executing the alert in the iframe's context."
+    },
+    "X5_a_javascript": {
+      "label": "Anchor with javascript: href",
+      "payload": "<a href=\"javascript:alert('X5')\">click me</a>",
+      "what_it_would_do_if_markup": "Render a clickable link that executes JavaScript when clicked."
+    },
+    "X6_body_onload": {
+      "label": "Body onload",
+      "payload": "<body onload=alert('X6')>",
+      "what_it_would_do_if_markup": "Execute the onload handler when the body is parsed."
+    },
+    "X7_div_onmouseover": {
+      "label": "Div onmouseover",
+      "payload": "<div onmouseover=alert('X7')>hover me</div>",
+      "what_it_would_do_if_markup": "Execute the onmouseover handler when the user hovers the div."
+    },
+    "X8_style_expression": {
+      "label": "CSS expression (legacy IE)",
+      "payload": "<div style=\"width: expression(alert('X8'))\">styled</div>",
+      "what_it_would_do_if_markup": "In legacy IE, evaluate the expression when the style is applied. In modern browsers this is inert, but it is still a vector that a filter would have to recognise."
+    }
+  }
+}
