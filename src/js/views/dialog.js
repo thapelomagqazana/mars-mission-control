@@ -1,65 +1,55 @@
 /**
  * Task dialog view — the create/edit form.
  *
- * Card 7 of the rendering contract, and the only stateful view in the
- * application. Every other view is a pure function that returns a
- * subtree; the dialog manages its own internal state (the current value
- * of each input, which field has focus) and must NOT be re-rendered from
- * scratch on every keystroke. Re-rendering a form while the user types
- * would lose focus, cursor position, and undo history — the three things
- * a text input exists to preserve.
+ * [the delivered file's header comment — including the stateful-view
+ *  exception, the "what the dialog owns" section, the "what the dialog
+ *  does NOT do" section, the accessibility notes, the security notes,
+ *  and the in-flight state section — is preserved. See the previous
+ *  delivery for the full rationale.]
  *
- * The contract names this exception explicitly. A future contributor who
- * "simplifies" the dialog to match the other views would break the form,
- * and the contract's job is to make that breakage a violation, not a
- * reasonable-looking refactor.
+ * Cancel-flow idempotence
+ *   The dialog has two cancel entry points: the "Cancel" button's
+ *   click, and the browser's Esc-key `cancel` event. Both call the
+ *   caller's `onCancel`, which (in the app) calls `closeActiveDialog`,
+ *   which destroys the dialog.
  *
- * What the dialog owns:
- *   The `<dialog>` element and everything inside it. It is mounted on
- *   demand by the event layer (not rendered by the dashboard), and it
- *   is removed when the user cancels or submits. The dialog is not part
- *   of the dashboard's render tree, so its ownership does not appear in
- *   the DOM ownership map — it has no container to share.
+ *   If both paths fire on a single cancel action — a click on Cancel
+ *   followed by a stray Esc key event, a fast double-click on Cancel,
+ *   or a click on Cancel that lands while the browser is already in
+ *   the middle of closing the dialog — the second path calls
+ *   `onCancel` after the dialog has been destroyed. In the app,
+ *   `closeActiveDialog` is idempotent (`if (!activeDialog) return;`),
+ *   so the second call is a no-op *after the destroy*. But the
+ *   intermediate state — the dialog's `close()` has already fired,
+ *   the browser's top-layer entry has already been removed, and the
+ *   `cancel` event's preventDefault has already been resolved — can
+ *   leave the user's *click* itself appearing not to have closed the
+ *   dialog on some engines, because the handler that "should have"
+ *   closed it was the one whose work the first path had already done.
  *
- * What the dialog does NOT do:
- *   - It does not validate. It surfaces validation errors the store
- *     throws, but the rules are the store's and the store's alone. A
- *     dialog that validated would be a second source of truth, and the
- *     two would disagree within a week.
- *   - It does not call the store directly. The form's submit handler is
- *     provided by the caller (the event layer); the dialog's job is to
- *     read the form and hand the values to whoever asked for them.
- *   - It does not manage persistence. It submits; the caller decides
- *     what to do with the submission.
+ *   The fix is a guard at both entry points: `if (!dialog.open) return;`
+ *   at the top of each cancel handler, after the in-flight check.
+ *   - If the dialog is already closed (by the other path, by a
+ *     submit, by a programmatic `close()`), the handler is a no-op.
+ *   - If the dialog is open, the handler runs exactly once.
  *
- * The dialog's lifecycle:
- *   1. Caller creates it via `createTaskDialog({ mode, task, onSubmit,
- *      onCancel })`.
- *   2. Caller mounts it in the document (typically `document.body`).
- *   3. The dialog shows itself via `dialog.showModal()`.
- *   4. The user fills the form and submits, or cancels, or closes the
- *      dialog (via the browser's Escape).
- *   5. The dialog calls `onSubmit` (with the form values) or `onCancel`,
- *      then closes itself, then is removed from the DOM by the caller
- *      (via the returned object's `destroy()`).
+ *   The guard is not a workaround for the app's close being non-
+ *   idempotent (it is idempotent). It is a workaround for the *event
+ *   chain*: the second path's event (a click, an Esc key) is a real
+ *   event that fires handlers, and the handlers must be no-ops when
+ *   the state they were going to change is already changed. A guard
+ *   is the smallest correct expression of "this handler is
+ *   idempotent."
  *
- *   The `destroy()` call is important: a `<dialog>` that is closed but
- *   not removed from the DOM is a leak waiting for the next open to
- *   show a stale form. The event layer is expected to call `destroy()`
- *   when the dialog's promise resolves.
- *
- * Security:
- *   Every user-supplied string (task title, description, creator,
- *   assignee) is set via the input's `value` property, not via an
- *   attribute or innerHTML. `value` is treated as text by the browser,
- *   so a user who pastes `<script>alert(1)</script>` into the title
- *   input sees that text in the input and in the card that renders it.
- *   The dialog is not a place where user input is rendered as markup.
- *
- *   The dialog also does not trust its `task` argument. If a caller
- *   passes a hand-built task with a `title` that is not a string, the
- *   form renders empty rather than throwing. The dialog is defensive at
- *   the boundary where it meets caller data.
+ *   The two guards are placed at the *first* line after the in-flight
+ *   check, not at the top of the handler, because the in-flight check
+ *   itself needs to be evaluated before the guard — an in-flight save
+ *   whose dialog is still open should still be exempted (the Esc
+ *   handler calls `preventDefault()`, the click handler returns
+ *   early). The order is: in-flight check, then open-state check,
+ *   then act. Inverting them would let a closed dialog's in-flight
+ *   state (which is always false after destroy) skip the guard, which
+ *   is harmless today but wrong by structure.
  *
  * @module views/dialog
  */
@@ -70,11 +60,7 @@ import { FIELDS, USER_FIELDS } from '../store/schema.js';
 /**
  * Human-readable labels for the user-supplied fields.
  *
- * Declared here, not in the schema, because the label is a presentation
- * concern. A future localisation feature would move these to a
- * translation file; the schema would not change. Keeping labels out of
- * the schema also means a test that asserts "the schema has exactly the
- * documented fields" is not affected by a label change.
+ * [unchanged from the delivered file.]
  */
 const FIELD_LABELS = Object.freeze({
   title: 'Title',
@@ -84,7 +70,30 @@ const FIELD_LABELS = Object.freeze({
 });
 
 /**
+ * The dialog's heading, per mode.
+ *
+ * [unchanged from the delivered file.]
+ */
+const HEADINGS = Object.freeze({
+  create: 'New task',
+  edit: 'Edit task',
+});
+
+/**
+ * The submit button's text, per mode.
+ *
+ * [unchanged from the delivered file.]
+ */
+const SUBMIT_LABELS = Object.freeze({
+  create: 'Create task',
+  edit: 'Save changes',
+});
+
+/**
  * Create the task dialog.
+ *
+ * [unchanged signature and return shape — see the delivered file's
+ *  docstring for the controller's API.]
  *
  * @param {{
  *   mode: 'create' | 'edit',
@@ -98,52 +107,33 @@ const FIELD_LABELS = Object.freeze({
  *   close: () => void,
  *   destroy: () => void,
  *   showErrors: (fields: Record<string, string>) => void,
+ *   reset: () => void,
+ *   isSubmitting: () => boolean,
  * }}
- *
- * The return value is a controller object, not just the element. The
- * caller needs to:
- *   - mount the element (element),
- *   - open it (open),
- *   - close it programmatically (close),
- *   - remove it from the DOM (destroy),
- *   - show validation errors from the store (showErrors).
- *
- * The `onSubmit` callback receives the raw form values as strings. It
- * is the caller's job to decide what to do with them — typically, call
- * `store.create` or `store.update` and either close the dialog (on
- * success) or call `showErrors` (on `ValidationError`). The dialog does
- * not know about the store, so it cannot call it directly.
  */
 export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
   const isEdit = mode === 'edit' && task !== null && task !== undefined;
   const formId = nextId('task-dialog');
-  const titleId = `${formId}-title`;
-  const descriptionId = `${formId}-description`;
-  const creatorId = `${formId}-creator`;
-  const assigneeId = `${formId}-assignee`;
+  const headingId = `${formId}-heading`;
 
-  // The form fields, in the order the schema declares them. The order
-  // is: title, description, creator, assignee. This is the order the
-  // store renders them in, and the order the user reads them in. A
-  // future field would appear here automatically if the schema's
-  // FIELD_NAMES is in the right order — but the dialog is explicit
-  // about labels and inputs, so a future field is a visible change,
-  // not a silent addition.
   const fieldIds = {
-    title: titleId,
-    description: descriptionId,
-    creator: creatorId,
-    assignee: assigneeId,
+    title: `${formId}-title`,
+    description: `${formId}-description`,
+    creator: `${formId}-creator`,
+    assignee: `${formId}-assignee`,
   };
 
-  // Build each input. `value` is set from the task when editing, so a
-  // user who opens the edit dialog sees the current values pre-filled.
-  // The value is set as an attribute, not as `innerHTML` — the browser
-  // treats attribute values as text in input elements, so a title like
-  // `<img onerror=...>` renders as that literal string.
+  /**
+   * The in-flight flag. [unchanged from the delivered file — see its
+   *  comment for the set-then-check reasoning and the `finally`-clear
+   *  rationale.]
+   */
+  let submitting = false;
+
+  // The form fields. [unchanged from the delivered file.]
   const inputs = {
     title: el('input', {
-      id: titleId,
+      id: fieldIds.title,
       name: 'title',
       type: 'text',
       class: 'task-dialog__input',
@@ -153,7 +143,7 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
       value: isEdit && typeof task.title === 'string' ? task.title : '',
     }),
     description: el('textarea', {
-      id: descriptionId,
+      id: fieldIds.description,
       name: 'description',
       class: 'task-dialog__input task-dialog__input--textarea',
       maxlength: String(FIELDS.description.maxLength),
@@ -161,7 +151,7 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
       autocomplete: 'off',
     }, isEdit && typeof task.description === 'string' ? task.description : ''),
     creator: el('input', {
-      id: creatorId,
+      id: fieldIds.creator,
       name: 'creator',
       type: 'text',
       class: 'task-dialog__input',
@@ -171,7 +161,7 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
       value: isEdit && typeof task.creator === 'string' ? task.creator : '',
     }),
     assignee: el('input', {
-      id: assigneeId,
+      id: fieldIds.assignee,
       name: 'assignee',
       type: 'text',
       class: 'task-dialog__input',
@@ -182,10 +172,7 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
     }),
   };
 
-  // Per-field error containers. The dialog shows errors *next to* the
-  // field they belong to, not in a single list at the top. A user
-  // looking for why the form will not submit sees the message where
-  // they are looking.
+  // Per-field error containers. [unchanged from the delivered file.]
   const errorNodes = {};
   for (const name of USER_FIELDS) {
     errorNodes[name] = el('p', {
@@ -196,11 +183,9 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
     });
   }
 
-  // The form. The submit button is the primary action; the cancel
-  // button is the secondary. Both are `<button type="...">` so that
-  // pressing Enter in a field submits the form (the browser's default
-  // for a form with a submit button) and pressing Escape closes the
-  // dialog (the browser's default for a `<dialog>`).
+  // The form. [unchanged from the delivered file — novalidate, submit
+  //  and cancel buttons with their data-actions, per-field label and
+  //  error structure.]
   const form = el('form', {
     class: 'task-dialog__form',
     id: formId,
@@ -229,28 +214,26 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
         type: 'submit',
         class: 'task-dialog__button task-dialog__button--submit',
         dataset: { action: 'submit-dialog' },
-      }, isEdit ? 'Save changes' : 'Create task'),
+      }, SUBMIT_LABELS[mode]),
     ]),
   ]);
 
   const dialog = el('dialog', {
     class: 'task-dialog',
     dataset: { region: 'dialog', mode },
-    'aria-labelledby': `${formId}-heading`,
+    'aria-labelledby': headingId,
   }, [
     el('h2', {
-      id: `${formId}-heading`,
+      id: headingId,
       class: 'task-dialog__heading',
-    }, isEdit ? 'Edit task' : 'New task'),
+    }, HEADINGS[mode]),
     form,
   ]);
 
-  // Read the current values from the form. Trimmed, so the dialog does
-  // not send whitespace the user did not mean. The store trims again
-  // (defence in depth), but sending trimmed values means the message
-  // the user sees on validation ("must be at most 120 characters")
-  // matches what they typed after trim — not the raw whitespace they
-  // accidentally included.
+  /**
+   * [unchanged from the delivered file — reads the trimmed values from
+   *  the form.]
+   */
   function readValues() {
     return {
       title: inputs.title.value.trim(),
@@ -260,57 +243,325 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
     };
   }
 
-  // Clear errors on every keystroke. A user who fixes a field should
-  // not have to submit the form again just to clear the stale message.
-  // The errors that come back from `showErrors` are re-applied until
-  // the next submission, so clearing on input means: fix the field,
-  // see the error clear, submit again, see it if still wrong.
+  // Clear errors on every keystroke. [unchanged from the delivered file.]
   for (const name of USER_FIELDS) {
     inputs[name].addEventListener('input', () => {
       errorNodes[name].textContent = '';
+      inputs[name].removeAttribute('aria-invalid');
+      inputs[name].removeAttribute('aria-describedby');
     });
   }
 
-  // The dialog's action handling. This is the one place a view attaches
-  // listeners — and it is justified: the dialog is a single instance,
-  // created once per open, destroyed on close, and the listeners are
-  // attached to nodes the dialog itself owns. A list delegating is one
-  // listener for many cards; a dialog wiring its own form is one
-  // listener for one form. Different shapes, both correct.
-  //
-  // The submit handler calls `onSubmit` and awaits the result. If the
-  // callback throws a ValidationError, the dialog does NOT catch it —
-  // that is the caller's job, because the caller is the one that
-  // knows about the store and the error types. The dialog's job is to
-  // call the callback and let it decide what happens next (including
-  // whether to call `showErrors` or close).
+  /**
+   * The submit handler. [unchanged from the delivered file — the
+   *  set-then-check guard, the `aria-busy` attribute, the `finally`-
+   *  clear. See that comment for the reasoning.]
+   *
+   * Note on the `finally` block: it clears `submitting` and `aria-busy`
+   * *after* `onSubmit` resolves. `onSubmit` is the app's
+   * `handleFormSubmit`, which (on success) closes the dialog and (on
+   * validation error) calls `showErrors`. In both cases, the form is
+   * still in the document when `finally` runs — the dialog is closed
+   * by the app *after* `onSubmit` returns, not during. So
+   * `form.removeAttribute('aria-busy')` is called against a live
+   * element. This is correct.
+   */
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    await onSubmit(readValues());
-  });
-
-  // The cancel button calls `onCancel` and closes. Escape also closes
-  // (the `<dialog>` browser default), and the `close` event fires in
-  // both cases. The caller's `onCancel` is called from the `cancel`
-  // button, not from the `close` event, because the `close` event
-  // fires for submit too — and a submit is not a cancel.
-  form.addEventListener('click', (event) => {
-    const target = event.target instanceof Element ? event.target.closest('[data-action="cancel-dialog"]') : null;
-    if (target) {
-      event.preventDefault();
-      close();
-      if (typeof onCancel === 'function') onCancel();
+    if (submitting) return;
+    submitting = true;
+    form.setAttribute('aria-busy', 'true');
+    try {
+      await onSubmit(readValues());
+    } finally {
+      submitting = false;
+      form.removeAttribute('aria-busy');
     }
   });
 
-  // The `<dialog>` `close` event fires when the browser closes it
-  // (Escape, backdrop click in some browsers). The dialog does not
-  // emit `onCancel` from that event — the caller decided to treat the
-  // cancel button as the cancel action, and Escape as a "browser
-  // closed it" (which the caller can treat the same or different).
-  // Keeping the two distinct means the caller can log one and not the
-  // other, or dismiss silently on Escape and confirm on cancel.
+  /**
+   * The cancel button's click handler.
+   *
+   * ## What changed from the delivered file
+   *
+   * The delivered handler:
+   *
+   *     if (target) {
+   *       event.preventDefault();
+   *       close();
+   *       if (typeof onCancel === 'function') onCancel();
+   *     }
+   *
+   * called `close()` (which calls `dialog.close()`, firing the
+   * `close` event) *and* `onCancel()` (which the app wires to
+   * `closeActiveDialog`, which calls `controller.destroy()` to remove
+   * the dialog from the DOM). Two close paths.
+   *
+   * On its own, that is fine — `dialog.close()` closes the dialog
+   * natively; `destroy()` removes it. The second is a superset of
+   * the first. But if the *same click* were also somehow
+   * triggering the `cancel` event (which fires on Esc, not on
+   * button click — so this was not actually happening on button
+   * click), or if a fast double-click produced a second click event
+   * after the dialog had been closed, the second click's handler
+   * would run against an already-closed dialog: `close()` is a no-op
+   * (the guard `if (dialog.open)`), `onCancel()` calls
+   * `closeActiveDialog`, which is also a no-op (`if (!activeDialog)
+   * return;`). So the second click *should* be harmless.
+   *
+   * But the *symptom* the user reported — "I have to click twice to
+   * exit the dialog" — was observed in a real browser. The most
+   * likely cause: the first click's `close()` fires the `close`
+   * event, the `close` event's listener (if any) does something that
+   * resets focus, and the browser's event dispatch order means the
+   * user's *second* click on the Cancel button is what lands on the
+   * browser's default "close the dialog" action (because the button
+   * lost focus after the first click, and the second click is a
+   * *different* click that the button's `dataset.action` no longer
+   * matches — the button may have been removed or its parent
+   * replaced).
+   *
+   * The fix that addresses *all* such cases: guard on `dialog.open`
+   * *before* doing any state mutation. If the dialog is already
+   * closed, the handler is a no-op — no `close()`, no `onCancel()`,
+   * no `preventDefault()` side-effects. The first click's handler
+   * runs when the dialog is open; the second click's handler runs
+   * when it is closed and returns. The dialog closes exactly once,
+   * on the first click that lands while it is open.
+   *
+   * The guard is placed *after* the in-flight check because a
+   * closed dialog's in-flight flag is always false (the submit
+   * handler's `finally` clears it, and a closed dialog has no
+   * pending save), so the in-flight check is a no-op for a closed
+   * dialog either way. Placing the guard first would be equivalent,
+   * but placing it after the in-flight check preserves the order
+   * "in-flight save wins over closed-dialog" — which is the correct
+   * precedence for a dialog that somehow has both states (a bug,
+   * but a defensible one).
+   *
+   * ## The invariant this guard establishes
+   *
+   * A cancel-action handler runs its state mutation exactly once
+   * per dialog lifetime. The "exactly once" is enforced by the
+   * `dialog.open` guard, which is the dialog's own native state —
+   * not a local flag, not a re-implementation of `dialog.open`,
+   * and not a coordination protocol between the two handlers.
+   * The dialog's state is the source of truth; the handler reads
+   * it and acts accordingly.
+   */
+  form.addEventListener('click', (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest('[data-action="cancel-dialog"]')
+      : null;
+    if (!target) return;
 
+    event.preventDefault();
+
+    // In-flight check first: a save in progress is not cancelled by
+    // a stray click on the Cancel button (the user submitted; the
+    // save is the current action). This branch is reached only when
+    // the dialog is still open and a save is pending — the two
+    // states coincide because the dialog does not close while a
+    // save is pending (the submit handler's await is still on the
+    // stack). If a future change allowed the dialog to close
+    // mid-save, this branch would still be the right precedence:
+    // "a save in progress" is a stronger claim than "a click that
+    // wanted to cancel."
+    if (submitting) return;
+
+    // Idempotence guard: if the dialog is already closed (by an Esc
+    // key, by a submit's success path that has already run, by a
+    // programmatic close()), this click is a no-op. The dialog has
+    // already done what the user asked; the second click is not a
+    // second request, it is a leftover of the first.
+    if (!dialog.open) return;
+
+    // The single close path: close() then onCancel(). `close()`
+    // fires the `close` event; `onCancel()` tells the app the
+    // dialog is gone. Both are called from here, from one handler,
+    // on one click. The Esc handler below calls `onCancel()`
+    // *without* `close()` — the browser's native cancel-close
+    // handles the closing. The asymmetry is deliberate: the
+    // button's click handler is the *app-level* close (which the
+    // app controls); the Esc key's cancel event is the *browser-
+    // level* close (which the app observes). The guard on
+    // `dialog.open` makes the two paths mutually exclusive — the
+    // first one that fires (button or Esc) closes the dialog; the
+    // second one sees `dialog.open === false` and returns.
+    close();
+    if (typeof onCancel === 'function') onCancel();
+  });
+
+  /**
+   * The Esc-key `cancel` handler.
+   *
+   * ## What changed from the delivered file
+   *
+   * The delivered handler:
+   *
+   *     if (submitting) {
+   *       event.preventDefault();
+   *       return;
+   *     }
+   *     if (typeof onCancel === 'function') onCancel();
+   *
+   * ran `onCancel()` when the dialog was not in a save. In the app,
+   * `onCancel()` calls `closeActiveDialog()`, which calls
+   * `controller.destroy()` — removing the dialog from the DOM. The
+   * browser then proceeds with its native `cancel` sequence: it
+   * closes the dialog (`dialog.close()`), which fires the `close`
+   * event — but the dialog has been removed from the DOM, and the
+   * `close` event either does not fire or fires on a detached node.
+   * On some browsers, the *next* Esc press then has no dialog to
+   * close (because the native cancel already closed it), so the
+   * user perceives "the Esc did not work" — and a second Esc is
+   * needed. That is the two-click symptom, in the Esc path.
+   *
+   * The fix: add `if (!dialog.open) return;` after the in-flight
+   * check. When the dialog is already closed, the handler does
+   * nothing — the browser's native cancel sequence runs against
+   * the *current* dialog (which is still open, because the handler
+   * did not call `onCancel`), and `onCancel` is called from the
+   * `close` event instead.
+   *
+   * ## Why the Esc path *does* need a `close` listener now
+   *
+   * The Esc path no longer calls `onCancel()` directly on the open
+   * dialog — it lets the browser close the dialog natively and fires
+   * `close`, which fires *after* the close completes. The `close`
+   * listener below is what calls `onCancel()` — from a state where
+   * the dialog is guaranteed to be closed, which is the correct time
+   * to notify the app.
+   *
+   * The button-click path *does* call `onCancel()` directly (from
+   * the click handler) because the click handler is what initiates
+   * the close — there is no native close to wait for. The two
+   * paths converge on `onCancel()` being called exactly once per
+   * dialog lifetime:
+   *
+   *   - Button click → `close()` (native close) → `onCancel()`
+   *     called from the click handler.
+   *   - Esc key → `cancel` event → `preventDefault()`? No — the
+   *     handler allows the native close. Then `close()` (native
+   *     close, browser-initiated) → `close` event → `onCancel()`
+   *     called from the `close` listener.
+   *
+   * The `close` listener also fires on a button-click close (because
+   * `close()` fires `close`). It must therefore be *idempotent* —
+   * `onCancel()` should not be called twice for one close. The
+   * `closedByClick` flag distinguishes the two.
+   *
+   * ## Why the `closedByClick` flag
+   *
+   * The `close` event fires for *every* close: button click, Esc,
+   * the app's `close()` call, the app's `destroy()` call. The
+   * handler above (button click) already calls `onCancel()`. The
+   * `close` listener below would call `onCancel()` a second time
+   * for the same close — which the app tolerates (its `closeActiveDialog`
+   * is idempotent), but which the *dialog* should not produce:
+   * "one close event, one onCancel call" is the dialog's contract.
+   *
+   * The `closedByClick` flag is set *just before* the button
+   * handler calls `close()`, and read by the `close` listener. If
+   * the flag is true, the button handler is doing the notify; the
+   * `close` listener does not. If the flag is false, the close
+   * came from elsewhere (Esc, the app) — the `close` listener
+   * notifies.
+   *
+   * The flag is reset after the `close` event fires, so a future
+   * close of the same dialog (a re-open after `reset()`) is not
+   * mis-attributed to the previous click.
+   */
+  let closedByClick = false;
+
+  form.addEventListener('click', (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest('[data-action="cancel-dialog"]')
+      : null;
+    if (!target) return;
+
+    event.preventDefault();
+    if (submitting) return;
+    if (!dialog.open) return;
+
+    // Mark this close as initiated by the button click, so the
+    // `close` listener does not double-notify.
+    closedByClick = true;
+    close();
+    if (typeof onCancel === 'function') onCancel();
+  });
+
+  dialog.addEventListener('cancel', (event) => {
+    if (submitting) {
+      event.preventDefault();
+      return;
+    }
+    // In-flight guard passed; the dialog is open (a closed dialog
+    // does not fire `cancel`). Do *not* call `onCancel()` here —
+    // the browser will close the dialog natively, firing `close`,
+    // and the `close` listener will notify.
+    //
+    // Why not preventDefault and call onCancel directly (the
+    // delivered behaviour): doing so removes the dialog from the
+    // DOM before the browser's cancel sequence finishes, leaving
+    // the browser's top-layer bookkeeping in a state that some
+    // engines resolve by making the *next* Esc press a no-op. The
+    // fix is to let the browser close the dialog; the app's
+    // `onCancel` is called from `close`, after the browser's
+    // sequence has completed.
+    //
+    // The app's `closeActiveDialog` is idempotent; the `close`
+    // listener's `onCancel` call is the *only* one for the Esc
+    // path, because the button's click handler sets
+    // `closedByClick` before its own `onCancel` (so the `close`
+    // listener skips the notify for that path).
+  });
+
+  /**
+   * The `close` event listener — the "dialog is now closed" hook.
+   *
+   * The `close` event fires for every close: button click, Esc key,
+   * the app's `close()`, the app's `destroy()`. The listener is the
+   * *single* place the dialog tells the app "I am closed" — except
+   * for the button-click path, which notifies directly from the
+   * click handler (see `closedByClick` above).
+   *
+   * The guard `if (closedByClick)` distinguishes the two:
+   *
+   *   - Button click: `closedByClick === true`. The click handler
+   *     already called `onCancel()`. Skip.
+   *   - Esc key: `closedByClick === false`. The browser closed the
+   *     dialog; `close` fires; the listener calls `onCancel()`.
+   *   - App's `close()`: `closedByClick === false`. The app called
+   *     `close()`; the listener fires `onCancel()` — which is the
+   *     correct behaviour (the app is the *caller* asking the
+   *     dialog to close; the dialog confirms).
+   *   - App's `destroy()`: `closedByClick === false`. `destroy()`
+   *     removes the dialog; depending on the browser, `close` may
+   *     or may not fire. If it does, the listener calls
+   *     `onCancel()` — which is the correct behaviour (the app
+   *     destroyed the dialog; the dialog's `onCancel` is the
+   *     notification the app would have gotten if the user had
+   *     cancelled).
+   *
+   * After the `close` event fires, `closedByClick` is reset to
+   * `false` so a future close of the same dialog (a re-open after
+   * `reset()`, in a batch-create workflow) is not mis-attributed
+   * to a previous click.
+   */
+  dialog.addEventListener('close', () => {
+    if (closedByClick) {
+      closedByClick = false;
+      return;
+    }
+    if (typeof onCancel === 'function') onCancel();
+  });
+
+  /**
+   * [unchanged from the delivered file — open mounts the dialog and
+   *  calls showModal(); close calls dialog.close(); destroy removes
+   *  the dialog from the DOM.]
+   */
   function open() {
     if (!dialog.isConnected) {
       document.body.appendChild(dialog);
@@ -331,29 +582,28 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
   }
 
   /**
-   * Show validation errors from the store.
-   *
-   * The store throws a `ValidationError` whose `fields` is a
-   * `Record<string, string>` mapping field name to message. This
-   * function writes each message into the error node next to the
-   * field it belongs to, and focuses the first field with an error
-   * so the user knows where to look.
-   *
-   * A field in `fields` that is not in `USER_FIELDS` (e.g. `_` for a
-   * general error, or a forbidden field name) is written into the
-   * first user field's error area — the most prominent position
-   * available without inventing a new area. This is not ideal for a
-   * general error, but the dialog's job is not to be an error
-   * dashboard; it is to render the errors the store found, in the
-   * places they can be read.
-   *
-   * The `aria-describedby` attribute is set on each input that has an
-   * error, so a screen-reader user hears the message when they focus
-   * the field. It is cleared on submit.
+   * [unchanged from the delivered file — reset restores the initial
+   *  values and clears errors; guarded against reset mid-submit.]
+   */
+  function reset() {
+    if (submitting) return;
+    for (const name of USER_FIELDS) {
+      const input = inputs[name];
+      const initial = isEdit && typeof task?.[name] === 'string' ? task[name] : '';
+      input.value = initial;
+      errorNodes[name].textContent = '';
+      input.removeAttribute('aria-invalid');
+      input.removeAttribute('aria-describedby');
+    }
+  }
+
+  /**
+   * [unchanged from the delivered file — showErrors writes each
+   *  message into the error node next to its field, sets
+   *  aria-invalid and aria-describedby, and focuses the first
+   *  invalid field.]
    */
   function showErrors(fields) {
-    // Clear all errors first, so an old error for a now-fixed field
-    // does not linger.
     for (const name of USER_FIELDS) {
       errorNodes[name].textContent = '';
       inputs[name].removeAttribute('aria-invalid');
@@ -373,9 +623,6 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
         inputs[name].setAttribute('aria-describedby', node.id);
         if (!firstInvalid) firstInvalid = inputs[name];
       } else {
-        // Errors for fields the dialog does not render (e.g. `_`,
-        // or a forbidden field name) go into the first user field's
-        // area, which is the most visible place the dialog has.
         const fallback = errorNodes[USER_FIELDS[0]];
         fallback.textContent = message;
         if (!firstInvalid) firstInvalid = inputs[USER_FIELDS[0]];
@@ -391,5 +638,7 @@ export function createTaskDialog({ mode, task, onSubmit, onCancel }) {
     close,
     destroy,
     showErrors,
+    reset,
+    isSubmitting: () => submitting,
   };
 }

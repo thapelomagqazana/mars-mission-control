@@ -417,6 +417,13 @@
    * the palette rather than in a separate file.
    * ------------------------------------------------------------------------- */
   color-scheme: dark; /* UA controls adopt dark styling.                             [source: derived] */
+  /* The transient notification layer. Sits above the header (a
+    * toast is "more important" than the header's contents because
+    * the header is informational and the toast is a response to an
+    * action), but below the modal layer (a dialog covers the page;
+    * a toast is an aside). The value is the next number on the
+    * ladder above --z-header. */
+  --z-toast: 20; /* Toast notifications.                          [source: derived] */
 }
 
 /* =============================================================================

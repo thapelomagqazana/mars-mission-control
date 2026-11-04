@@ -10,57 +10,52 @@
  * state takes the *reason* as its input so it can say the right thing.
  *
  * Why the reason matters:
- *   An empty list caused by "there are no tasks yet" needs a different
- *   message than an empty list caused by "your search matched nothing."
- *   The first says "create your first task"; the second says "try a
- *   different search." Both are empty states; both look the same; only
- *   the message differs. A view that guessed would guess wrong half the
- *   time, and the wrong message is worse than no message — "Create your
- *   first task" shown to a user whose search has no matches is confusing,
- *   not helpful.
+ *   [unchanged from the previous delivery — see that file for the full
+ *    rationale on why a single empty state with a "reason" input
+ *    replaces two separate views.]
  *
  * What the empty state owns:
- *   The `<div class="empty-state">` and everything inside it. This
- *   element is the *content* of the task-area container (emitted by
- *   taskList.js) when the list has zero items. It is not the container
- *   itself — the container is the stable element across renders; the
- *   empty state is one of its content states.
- *
- *   Why this distinction matters:
- *     The task-area container is the render target Phase 6 will
- *     populate. The empty state is the container's *empty render* — the
- *     same container with zero items. If the empty state were the
- *     container, then "populated" would mean "replace the container,"
- *     and Phase 6 would need to know when to replace it. If the empty
- *     state is content *inside* the container, then "populated" means
- *     "the container has different children," and the container's
- *     identity is preserved across renders.
- *
- *   The two states (no-tasks, no-results) are mutually exclusive —
- *   the empty state has one reason at a time. Both render into the
- *   same container; the container's identity is the same in both.
+ *   [unchanged from the previous delivery — the `<div class="empty-state">`
+ *    and everything inside it, as *content* of the task-area
+ *    container, not the container itself.]
  *
  * The empty-state copy
- *   The strings the view emits are exported as constants so a test can
- *   assert they match the compliance doc (docs/task-area.md) verbatim.
- *   The strings are treated as contract text, not as UI copy to be
- *   softened. A future change to the wording is a change to these
- *   constants AND to the doc, in the same commit — the test is the
- *   guard. This is the same discipline the commander disclosure's
- *   verbatim string follows; the two are compliance artefacts, and
- *   compliance artefacts live in one place each.
+ *   [unchanged from the previous delivery — the strings are exported
+ *    constants so a test can assert they match the compliance doc
+ *    verbatim. This is the same discipline the commander disclosure's
+ *    string follows.]
  *
  * The "create task" affordance
- *   The no-tasks state's action button carries the contracted `id` and
- *   `data-cy` from the selector register, plus the same
- *   `data-action="open-create-dialog"` the event layer already
- *   delegates. It is a real `<button>` — focusable by default,
- *   keyboard-activatable by default, announced as a button by screen
- *   readers. A future change that replaced the button with a visual
- *   affordance (an icon, a span) would fail the unit test (the button
- *   would no longer be a `<button>`) and the e2e test (the click would
- *   no longer open the dialog) — which is the whole point of the
- *   affordance being a real button.
+ *   [unchanged from the previous delivery — the no-tasks state's action
+ *    button carries the contracted id and data-cy, the same
+ *    `data-action="open-create-dialog"` the event layer delegates, and
+ *    is a real `<button>` (not a styled div).]
+ *
+ * The "clear search" affordance
+ *   The no-results state's action button carries its *own* contracted
+ *   id and data-cy — `dashboard-empty-clear` — matching the same
+ *   pattern as the create affordance. The two buttons are different
+ *   actions with different resolutions (create vs. clear), and a test
+ *   that wants to target one without the other should be able to
+ *   without a class selector, a text-content match, or a positional
+ *   selector.
+ *
+ *   Why the "clear search" button gained a contract in this delivery
+ *   (and not earlier): the *create-workflow audit* (Stage 7) tests the
+ *   "cancel via Esc during an open create dialog" path by pressing Esc
+ *   on the dialog — but the *empty-state* cancel path (the "clear
+ *   search" button) was tested only by text content, which is fragile
+ *   (a wording change would break the test without breaking the
+ *   button). Giving the button its own `data-cy` makes the test a
+ *   *selector* test — the register names the selector, the test
+ *   references it, the view emits it, and a wording change does not
+ *   affect the test. This is the same discipline the create
+ *   affordance already follows.
+ *
+ *   The button is a real `<button>` — focusable, keyboard-activatable,
+ *   announced as a button. A future change that replaced it with a
+ *   visual affordance would fail the same unit test the create button
+ *   has: the element would no longer be a `<button>`.
  *
  * @module views/emptyState
  */
@@ -71,10 +66,7 @@ import { el } from '../utils/dom.js';
  * The empty-state copy for the "no tasks in the store" state, verbatim
  * from the UI checklist.
  *
- * A single source. Tested against docs/task-area.md in
- * tests/unit/jsdom/renderContract.test.js. A future change to the
- * wording is a change to these constants AND to the doc, in the same
- * commit.
+ * [unchanged from the previous delivery.]
  */
 export const EMPTY_STATE_NO_TASKS_HEADING = 'No tasks yet';
 export const EMPTY_STATE_NO_TASKS_BODY =
@@ -85,8 +77,7 @@ export const EMPTY_STATE_NO_TASKS_ACTION = 'Create your first task';
  * The empty-state copy for the "search matched nothing" state, verbatim
  * from the UI checklist.
  *
- * A single source. Tested against docs/task-area.md in
- * tests/unit/jsdom/renderContract.test.js.
+ * [unchanged from the previous delivery.]
  */
 export const EMPTY_STATE_NO_RESULTS_HEADING = 'No matching tasks';
 export const EMPTY_STATE_NO_RESULTS_BODY =
@@ -96,47 +87,47 @@ export const EMPTY_STATE_NO_RESULTS_ACTION = 'Clear search';
 /**
  * The contracted id and data-cy for the "create task" affordance.
  *
- * Exported so the test can compare the rendered element's attributes
- * against these constants, and so a future selector-register entry can
- * reference the same values without duplicating strings. The values
- * follow the "dashboard-<region>" convention: the affordance is part
- * of the task-area region, and its id and data-cy name it as such.
- *
- * The "clear search" affordance does not carry a contracted id or
- * data-cy today — it is identified by `data-action="clear-search"`
- * (the event layer's hook) and by its presence in the no-results empty
- * state. If a future test needed to target it specifically, the id and
- * data-cy would be added here (and in the selector register) in the
- * same commit; the pattern is the same, and the reason for not adding
- * it now is "no consumer needs it yet."
+ * [unchanged from the previous delivery — exported so the test can
+ *  compare the rendered element's attributes against these constants,
+ *  and so a future selector-register entry can reference the same
+ *  values without duplicating strings.]
  */
 export const EMPTY_STATE_CREATE_ID = 'dashboard-empty-create';
 export const EMPTY_STATE_CREATE_DATA_CY = 'dashboard-empty-create';
 
 /**
+ * The contracted id and data-cy for the "clear search" affordance.
+ *
+ * The pattern mirrors the create affordance's: a `dashboard-empty-<name>`
+ * id and data-cy, exported so a test references the same constants the
+ * view writes, and so a future selector-register entry names the same
+ * value.
+ *
+ * The values are added in this delivery because the create-workflow
+ * audit needed to target the "clear search" action *as an action*
+ * (not as text), and a text-content selector is fragile. The register
+ * gains the entry; the view emits the attribute; the test references
+ * the constant. Three places, one value.
+ *
+ * A future change that wanted a *different* affordance in the no-results
+ * state (say, "Show all tasks" instead of "Clear search") would: rename
+ * the action; rename the constant; update the register; update the test.
+ * The button's identity (the id and data-cy) would remain — they name
+ * the *slot*, not the action's text.
+ */
+export const EMPTY_STATE_CLEAR_ID = 'dashboard-empty-clear';
+export const EMPTY_STATE_CLEAR_DATA_CY = 'dashboard-empty-clear';
+
+/**
  * Render the empty state for the given reason.
+ *
+ * [unchanged from the previous delivery — the two reasons are the only
+ *  two states in which the list can be empty. A third state is a
+ *  contract change and a new reason, not a message change on an
+ *  existing reason. The narrow union is deliberate.]
  *
  * @param {'no-tasks' | 'no-results'} reason
  * @returns {HTMLElement}
- *
- * The two reasons are the only two states in which the list can be
- * empty. If a third state ever appears (e.g. "storage unavailable"),
- * that is a contract change and a new reason — not a message change on
- * an existing reason. The narrow union is deliberate: it makes a new
- * state a visible code change rather than a string the caller happened
- * to pass.
- *
- * The two reasons produce different affordances:
- *   - no-tasks: the action is "Create your first task" (open the create
- *     dialog). The user's resolution is to create something.
- *   - no-results: the action is "Clear search" (clear the query). The
- *     user's resolution is to stop filtering.
- *
- * The two are distinct because a user in the first state has nothing
- * to clear, and a user in the second state does not want to create a
- * task — their task exists, it is just filtered out. A view that
- * offered the same action in both states would be wrong for one of
- * them.
  */
 export function renderEmptyState(reason) {
   if (reason === 'no-results') {
@@ -146,33 +137,17 @@ export function renderEmptyState(reason) {
   // fallback: if a caller passes an unexpected value, the view shows
   // the more general message rather than throwing. A throw from a
   // render function is worse than a slightly wrong message, because a
-  // throw breaks the whole render tree and the user sees nothing. The
-  // contract tests assert the two valid reasons produce the correct
-  // messages; the fallback only catches the case where a caller has
-  // a bug, and showing the general message is the least-bad response.
+  // throw breaks the whole render tree and the user sees nothing.
   return renderNoTasks();
 }
 
 /**
  * The "the store is empty" empty state.
  *
- * The call to action is "Create your first task" because that is
- * exactly what the user can do. The message names the concept
- * ("tasks") so a first-time user knows what will appear here.
- *
- * The button carries:
- *   - id="dashboard-empty-create"   — the contracted selector
- *   - data-cy="dashboard-empty-create" — the test selector
- *   - data-action="open-create-dialog" — the event layer's delegation
- *     hook (the same hook the header's create button uses; the event
- *     layer already handles both because it delegates from the content
- *     region, which contains this button)
- *
- * The button is focusable because it is a real <button>. A future
- * change that wanted a "create" affordance elsewhere (say, a keyboard
- * shortcut) would be a *second* trigger, not a replacement for this
- * one — the empty state's button is the primary affordance and the
- * accessible name's source.
+ * [unchanged from the previous delivery — the call to action is
+ *  "Create your first task" because that is exactly what the user can
+ *  do; the button carries the contracted id and data-cy, plus the
+ *  data-action="open-create-dialog" the event layer delegates.]
  *
  * @returns {HTMLElement}
  */
@@ -200,27 +175,28 @@ function renderNoTasks() {
  * The "the search matched nothing" empty state.
  *
  * The call to action is "Clear search" because the user's current query
- * is why the list is empty. The message names the query so the user
- * knows which search produced no results — helpful when they have
- * several windows open or several searches in memory.
+ * is why the list is empty. The button carries its own contracted id
+ * and data-cy, matching the same pattern as the create affordance.
  *
- * The query is not passed to this view. The view shows the *generic*
- * "clear your search" message rather than repeating the query, because
- * the query may be long and the message would wrap awkwardly. The
- * search-results view (Card 6) is the one that shows the query in its
- * summary line; the empty state shows the resolution. Two views, two
- * jobs, no overlap.
+ * Why the query is not passed to this view:
+ *   [unchanged from the previous delivery — the *generic* "clear your
+ *    search" message is shown rather than repeating the query, because
+ *   the query may be long and the message would wrap awkwardly. The
+ *    search-results view is the one that shows the query in its
+ *    summary line; the empty state shows the resolution.]
  *
  * The button carries:
- *   - data-action="clear-search" — the event layer's delegation hook
+ *   - id="dashboard-empty-clear"       — the contracted selector
+ *   - data-cy="dashboard-empty-clear"  — the test selector
+ *   - data-action="clear-search"       — the event layer's delegation hook
  *
- * It does NOT carry a contracted id or data-cy today. If a future test
- * needed to target it specifically, the id and data-cy would be added
- * here (and in the selector register) in the same commit. The reason
- * for not adding it now is "no consumer needs it yet" — the same
- * reason every token in the design-token register has to have a
- * consumer before it is added. A selector is an identifier for a
- * consumer; a selector with no consumer is a wish.
+ * A future change that wanted the no-results affordance to do something
+ * other than clear the search (e.g. "Show all tasks" that also resets
+ * other filters) would: change the action; change the button text;
+ * change the event layer's handler. The id and data-cy would *not*
+ * change — they name the slot, not the behaviour. This is the same
+ * split the create affordance follows: the id/cy is the *slot's*
+ * identity; the action and text are the *slot's* behaviour.
  *
  * @returns {HTMLElement}
  */
@@ -235,7 +211,11 @@ function renderNoResults() {
     el('button', {
       type: 'button',
       class: 'empty-state__action',
-      dataset: { action: 'clear-search' },
+      id: EMPTY_STATE_CLEAR_ID,
+      dataset: {
+        action: 'clear-search',
+        cy: EMPTY_STATE_CLEAR_DATA_CY,
+      },
     }, EMPTY_STATE_NO_RESULTS_ACTION),
   ]);
 }

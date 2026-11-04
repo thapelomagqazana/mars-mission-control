@@ -7,30 +7,9 @@
  *   - the empty state, when the array is empty.
  *
  * The container is the same element in both cases.
- *   The task-area container is not replaced by the empty state — and it
- *   is not replaced by the list. The container is stable across renders;
- *   its content (a `<ul>` or the empty state) is what changes. This is
- *   the "no throwaway placeholder" rule made structural: Phase 6's
- *   update mechanism calls `renderTaskList(tasks)` on every render — an
- *   empty array produces the empty state; a non-empty array produces
- *   the list. Same function, same container, same attributes.
- *
- *   The anti-pattern this shape avoids:
- *     The common pattern is "render a placeholder element that looks
- *     like the list, then replace it with the real list when data
- *     arrives." The placeholder and the real list are separate DOM
- *     shapes; a change to one does not affect the other, so the two
- *     drift. The placeholder is also throwaway code — its attributes,
- *     styles, and accessibility guarantees are unrelated to the real
- *     list's, so when the real list arrives, all of the placeholder's
- *     choices are up for revision.
- *
- *   The alternative (this file's shape):
- *     The container is the render target. The empty state is a normal
- *     render of the container with zero items — the same shape the
- *     populated list uses, with different children. The container's
- *     identity (region, id, data-cy) is preserved across renders;
- *     only the container's content changes.
+ *   [unchanged from the previous delivery — see that file for the full
+ *    rationale on why the container is stable across renders and why
+ *    the empty state is content, not a replacement.]
  *
  * What the list owns:
  *   The task-area container (a `<div class="task-area-container">`)
@@ -38,47 +17,58 @@
  *   card's contents are owned by `renderTaskCard`; the list does not
  *   reach inside them.
  *
- *   The `<ul>` carries `data-region="task-list"` — a name that
- *   describes the `<ul>`'s role as a list, distinct from the
- *   container's role as the region. The two regions are different
- *   because the two elements are different: the container is the
- *   region the UI checklist names ("task area"); the `<ul>` is one
- *   possible content of that container (a list of tasks).
+ *   The container carries:
+ *     - id="dashboard-list"             — the selector register's id
+ *     - data-region="list"              — the region name (matches the
+ *                                          grid area and region map)
+ *     - data-cy="dashboard-list"        — the test-selector contract
+ *     - data-listener="task-actions"    — the delegation boundary the
+ *                                          event layer attaches its
+ *                                          click listener to
+ *
+ *   The `data-listener` attribute is the *event-layer* contract, not a
+ *   region attribute. It marks the well as the element the event layer
+ *   delegates `[data-action]` clicks from — stable across renders, so
+ *   the delegated listener does not need re-attaching when the
+ *   container's content is replaced. A future change that added a
+ *   second action-bearing region (say, a card-level action menu) would
+ *   add its own `data-listener` attribute, and the event layer would
+ *   attach a listener to it.
+ *
+ *   The `<ul>` carries:
+ *     - class="task-list"
+ *     - data-region="task-list"         — the `<ul>`'s role *as a list*,
+ *                                          distinct from the container's
+ *                                          role as the region. A test
+ *                                          that wants "the list of tasks"
+ *                                          queries this attribute.
+ *     - data-cy="task-list"             — the register's selector for
+ *                                          the `<ul>` (used by tests
+ *                                          that want the list, not the
+ *                                          region)
+ *
+ *   Each `<li>` carries:
+ *     - class="task-list__item"
+ *     - data-task-id="<id>"             — the row's identity, matched
+ *                                          by the event layer's
+ *                                          delegation (a click on the
+ *                                          card's action finds the
+ *                                          closest `[data-task-id]`)
+ *     - data-cy="task-list__item"       — the register's selector for
+ *                                          list items (useful for tests
+ *                                          that count rows without
+ *                                          caring about card contents)
  *
  * What the list does not do:
- *   - It does not read from `taskStore`. The tasks are passed in.
- *   - It does not filter. The filtering happened before the call; the
- *     list renders what it was given.
- *   - It does not attach listeners per card. Events are delegated from
- *     the content region (the dashboard's `[data-region="content"]`
- *     ancestor); the event layer attaches one listener for that region
- *     and matches `[data-action]` descendants. The list does not need
- *     its own listener.
- *   - It does not decide between "no tasks" and "no results." The
- *     empty state takes a `reason`; the list passes `'no-tasks'`
- *     because the list's job is "render this array," and an empty
- *     array from the list's caller means "the store is empty" — the
- *     caller that wants `'no-results'` (the search results view)
- *     passes the empty array to the same list, but the reason comes
- *     from the search context, not the list.
+ *   [unchanged from the previous delivery — the list does not read
+ *    from the store, does not filter, does not attach listeners per
+ *    card, does not decide between "no tasks" and "no results."]
  *
  * A note on the empty-state reason:
- *   The list is called from two places:
- *     1. The dashboard's filled wrapper, with the full task list.
- *     2. The search results view, with the filtered list.
- *
- *   In case 1, an empty array means "no tasks exist."
- *   In case 2, an empty array means "no search results."
- *
- *   Both cases call `renderTaskList`, and both want a different empty
- *   state reason. The list cannot know which case it is in, because it
- *   only received an array.
- *
- *   The resolution is a second parameter: `renderTaskList(tasks,
- *   { emptyReason })`. The default is `'no-tasks'` because that is the
- *   more common case, and a caller that wants the other behaviour opts
- *   in explicitly. The parameter is part of the card's contract — it
- *   is named in the card, not invented at the call site.
+ *   [unchanged from the previous delivery — `emptyReason` is the
+ *    parameter that lets the search-results view ask for
+ *    'no-results' while the dashboard's filled render uses the default
+ *    'no-tasks'.]
  *
  * @module views/taskList
  */
@@ -109,6 +99,22 @@ export const TASK_AREA_ID = 'dashboard-list';
 export const TASK_AREA_DATA_CY = 'dashboard-list';
 
 /**
+ * The delegation boundary attribute. The event layer's `attachListeners`
+ * queries `[data-listener="task-actions"]` to find the element it
+ * should attach its delegated click listener to. The attribute is
+ * exported so a test can query it by the same constant the view
+ * writes — the test and the view name the same boundary.
+ *
+ * A future change that added a second action-bearing region (say, a
+ * card-level action menu separate from the current edit/delete
+ * buttons) would add a *different* `data-listener` value on its
+ * container, and the event layer would add a listener for it. One
+ * `data-listener` value per delegation boundary keeps the event
+ * layer's wiring legible.
+ */
+export const TASK_ACTIONS_LISTENER = 'task-actions';
+
+/**
  * Render the task-area container, populated with the current tasks or
  * the empty state.
  *
@@ -124,36 +130,38 @@ export const TASK_AREA_DATA_CY = 'dashboard-list';
  * across renders as a stable element.
  *
  * Why the container is not just the `<ul>`:
- *   A `<ul>` cannot contain the empty state (a `<div>`), because the
- *   content model of `<ul>` is `<li>`. The empty state would have to
- *   be a `<li>` — a card-shaped empty state pretending to be a list
- *   item. That is the wrong shape: the empty state is not a task, it
- *   is the absence of tasks. Putting it in a `<div>` container next to
- *   the `<ul>` (mutually exclusive) is the correct structure: the
- *   container is a task area that currently contains a `<ul>` or the
- *   empty state.
- *
- *   A future change that wanted the container to be a `<ul>` *and* the
- *   empty state to be a `<li>` would be a structural change — and
- *   would need to answer "why is the empty state a list item?" The
- *   current structure says "the empty state is not a task"; that is
- *   the answer.
+ *   [unchanged from the previous delivery — a `<ul>` cannot contain the
+ *    empty state, because the content model of `<ul>` is `<li>`. The
+ *    container is a `<div>` that holds either content.]
  *
  * Why the `<ul>` carries `data-region="task-list"` even when the
  * container carries `data-region="list"`:
- *   The two regions are different things. The container is the region
- *   the UI checklist names ("task area"); the `<ul>` is one possible
- *   content of that container (a list of tasks). The `<ul>`'s
- *   `data-region="task-list"` names the `<ul>`'s role *as a list* —
- *   which is why a test that wants to find "the list of tasks" can
- *   query `[data-region="task-list"]` and get the `<ul>` (when it
- *   exists), independent of the container. The container's
- *   `data-region="list"` names the container's role *as the region*.
- *   Two elements, two regions, two roles.
+ *   [unchanged from the previous delivery — the two regions are
+ *    different things: the container is the region the UI checklist
+ *    names; the `<ul>` is one possible content of that container.]
  *
- *   The `data-region="task-list"` on the `<ul>` is preserved from the
- *   previous delivery — a test that targeted the `<ul>` by its region
- *   continues to work. The container is an addition, not a rename.
+ * Why the container carries `data-listener="task-actions"`:
+ *   The event layer needs a stable element to attach its delegated
+ *   click listener to. The container is that element — its content
+ *   is replaced on each render, but the container itself is re-created
+ *   (by this function) only once per render. Attaching the listener
+ *   to the container means:
+ *
+ *     - The listener is attached once per render (not once per card).
+ *     - A future change to the card's internals (adding a button,
+ *       reordering fields) does not break the delegation — the
+ *       listener matches `[data-action]` descendants regardless of
+ *       what the card contains.
+ *     - The listener is attached to an element that exists *before*
+ *       the cards are placed inside it, so there is no race between
+ *       "cards rendered" and "listener attached."
+ *
+ *   The `data-listener` attribute is *not* a region attribute. It is
+ *   a *delegation* attribute — it says "the event layer listens here."
+ *   A future reader who wants to find every delegation boundary in the
+ *   app greps for `data-listener` and finds them; a reader who wants
+ *   to find every region greps for `data-region` and finds those. Two
+ *   concepts, two attributes.
  */
 export function renderTaskList(tasks, options = {}) {
   const emptyReason = options.emptyReason || 'no-tasks';
@@ -164,6 +172,7 @@ export function renderTaskList(tasks, options = {}) {
     dataset: {
       region: TASK_AREA_REGION,
       cy: TASK_AREA_DATA_CY,
+      listener: TASK_ACTIONS_LISTENER,
     },
   });
 
@@ -175,11 +184,17 @@ export function renderTaskList(tasks, options = {}) {
   container.appendChild(
     el('ul', {
       class: 'task-list',
-      dataset: { region: 'task-list' },
+      dataset: {
+        region: 'task-list',
+        cy: 'task-list',
+      },
     }, tasks.map((task) =>
       el('li', {
         class: 'task-list__item',
-        dataset: { taskId: task.id },
+        dataset: {
+          taskId: task.id,
+          cy: 'task-list__item',
+        },
       }, renderTaskCard(task))
     ))
   );

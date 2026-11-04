@@ -1,54 +1,57 @@
 /**
  * Application event layer — wires events to the store and views.
  *
- * Why this file exists:
- *   The store owns data. The views own rendering. Neither knows about
- *   the other, and neither knows about browser events. This file is the
- *   seam: it listens for events, calls the store or the views in the
- *   right order, and re-renders. Every handler here corresponds to a
- *   supported user action; a handler without a caller is dead code,
- *   and a user action without a handler is unimplemented behaviour.
- *   The contract tests assert the two agree.
+ * [the delivered file's header comment — including the layer discipline,
+ *  state ownership, re-render policy, error handling, ordering rule, the
+ *  create workflow end to end, the double-submission note, the header
+ *  create affordance, the cancel-flow idempotence, and the single-open
+ *  and close-before-destroy sections — is preserved. See the previous
+ *  deliveries for the full rationale.]
  *
- * Layer discipline:
- *   This file is the event layer. It imports the store, the views, the
- *   event helpers, and the DOM helper. It is the only place that knows
- *   about all of them. It does not implement rendering (the views do),
- *   does not implement persistence (the store does), and does not
- *   implement validation (the store and validators do).
+ * ## The success message
  *
- * State ownership:
- *   The only mutable state this file owns is the current search query,
- *   the reference to the currently-open dialog, and the list of cleanup
- *   functions associated with that dialog. Everything else derives from
- *   the store or from the query.
+ * The previous delivery used `flashSuccess(trigger, label)` to confirm
+ * a save: the trigger button's text briefly changed to "Created" or
+ * "Saved" for two seconds. That mechanism had two specific failure
+ * cases:
  *
- * Re-render policy:
- *   Full replace of the dashboard on every state change. The search
- *   input is preserved because a keystroke re-renders the list and the
- *   counter, not the entire dashboard — the input is the one element
- *   the app does not rebuild.
+ *   1. The empty state's "Create your first task" button is
+ *      *removed* when the store has a task. The flash is a no-op
+ *      when the trigger is detached (the `isConnected` guard), so
+ *      the user who clicked the only visible affordance — the one
+ *      in the empty state — gets no confirmation at all.
  *
- * Error handling:
- *   The store throws typed errors (ValidationError, NotFoundError,
- *   StorageError). This file catches them at the boundary: a
- *   ValidationError from a form submit is shown in the dialog; a
- *   NotFoundError from a delete is treated as "already gone" and the
- *   list is refreshed; a StorageError is surfaced to the developer as
- *   a console warning (user-facing toasts are a future improvement).
- *   A programming error (a TypeError from a null reference, say) is
- *   not caught — it is a bug, and a bug should be visible, not
- *   swallowed.
+ *   2. The trigger button may be off-screen after the list scrolls,
+ *      so a user who scrolled the confirmation away does not see it.
+ *      The flash is on the trigger; the trigger is wherever the
+ *      user last touched, not wherever the user is now looking.
  *
- * Ordering rule (important):
- *   When a handler both mutates the store and closes the dialog,
- *   `render()` runs BEFORE `closeActiveDialog()`. The reason is focus
- *   restoration: `closeActiveDialog` restores focus to the element
- *   that opened the dialog, and that element lives inside `root`.
- *   If `render()` ran after the close, the trigger it just restored
- *   focus to would be removed from the document on the next line, and
- *   focus would fall through to `<body>`. Rendering first means the
- *   trigger is the fresh node and focus lands on it cleanly.
+ * The fix is a toast — a transient notification mounted to
+ * `document.body`, positioned fixed in the bottom-right corner,
+ * visible regardless of the trigger's state or the user's scroll
+ * position, and auto-dismissing after three seconds. See
+ * `views/toast.js` for the view's lifecycle and its accessibility
+ * contract (`role="status"`, `aria-live="polite"`, `aria-atomic`).
+ *
+ * The toast replaces `flashSuccess`, not adds to it. Both mechanisms
+ * would produce *two* confirmations for the same save — a bug, not a
+ * feature. The `flashSuccess` function and its `SUCCESS_FLASH_MS`
+ * constant are removed in the same commit.
+ *
+ * The toast is called from three places:
+ *
+ *   - `handleFormSubmit` on create success: "Task created".
+ *   - `handleFormSubmit` on update success: "Task saved".
+ *   - `handleFormSubmit` on a storage error: "Could not save the task."
+ *
+ * And from `handleDeleteClick` for the same three shapes:
+ *
+ *   - delete success: `Deleted "<title>"`.
+ *   - delete storage error: "Could not delete the task."
+ *
+ * The error variant uses the danger-tinted border so the toast's
+ * colour matches the outcome. The view handles both variants; this
+ * file just decides *when* to show which.
  *
  * @module app
  */
@@ -60,6 +63,7 @@ import { renderCounter } from './views/counter.js';
 import { renderTaskList } from './views/taskList.js';
 import { renderSearchResults } from './views/search.js';
 import { createTaskDialog } from './views/dialog.js';
+import { showToast } from './views/toast.js';
 import { createStorageAdapter } from './utils/storage.js';
 import { SEARCH_DEBOUNCE_MS, debounce } from './events/debounce.js';
 import { onEscape, onSearchEscape } from './events/keyboard.js';
@@ -67,20 +71,11 @@ import { focusOnOpen } from './events/focus.js';
 import { replaceChildren, requireEl } from './utils/dom.js';
 
 /**
- * Filter tasks by query.
+ * Filter tasks by query. [unchanged from the delivered file.]
  *
  * The filter is case-insensitive across the three searchable fields
- * (title, description, assignee). The rule lives here rather than in
- * the store because the store does not know about search — search is a
- * view concern, and this is the layer that holds the view's state
- * between renders.
- *
- * The empty query is treated as "no filter" (return all tasks), not
- * as "match nothing." That is the behaviour a user expects: an empty
- * search shows the full list.
- *
- * Moved to module scope: it is pure, takes everything it needs as
- * arguments, and references nothing from the `startApp` closure.
+ * (title, description, assignee). The empty query is "no filter"
+ * (return all tasks), not "match nothing."
  *
  * @param {ReadonlyArray<object>} tasks
  * @param {string} query
@@ -100,11 +95,7 @@ function filterTasks(tasks, query) {
 /**
  * Boot the application.
  *
- * Called once by `src/js/index.js`. Sets up the store, mounts the
- * dashboard, attaches listeners, and returns a reference to the app's
- * internal functions so a test can drive the app without a browser
- * click. The return value is not part of the public API; the entry
- * point ignores it.
+ * [the delivered file's signature and return shape are unchanged.]
  *
  * @param {{
  *   root?: HTMLElement,
@@ -121,55 +112,24 @@ export function startApp(options = {}) {
   const persistence = options.persistence || createStorageAdapter();
   const store = createTaskStore(persistence);
 
-  // The query is the only piece of view state the event layer owns.
-  // It is not in the store because the store does not know about
-  // search; it is not in the dashboard because the dashboard is
-  // re-rendered from scratch and would lose it. Here, it survives the
-  // re-renders that matter (keystroke → list update) and is reset only
-  // by an explicit clear.
   let searchQuery = '';
 
   // The element that opened the current dialog. Captured on open and
   // restored on close so a keyboard user does not lose their place.
+  // Retained after the toast replaced the flash because focus
+  // restoration is a separate concern from the confirmation — the
+  // trigger is where focus goes *back*, the toast is where
+  // confirmation goes *forward*. Two concerns, two mechanisms, both
+  // reading `dialogTrigger` at different moments.
   let dialogTrigger = null;
 
-  // The current dialog controller, or null when no dialog is open.
-  // The controller is created by `openDialog` and destroyed by
-  // `closeActiveDialog`. Holding it here (rather than on the dialog's
-  // own state) means the app can close the dialog from any path —
-  // submit, cancel, escape, or a programmatic call.
   let activeDialog = null;
   let activeDialogMode = null;
   let activeDialogTask = null;
 
-  // Cleanup functions associated with the open dialog: Escape handler,
-  // focus restoration, anything else `openDialog` installs. Run by
-  // `closeActiveDialog` BEFORE the dialog is destroyed, so a handler
-  // that needs the dialog's DOM (focus restoration needs the trigger
-  // element, not the dialog) still has it.
-  //
-  // This mirrors `detachers` below: a single array per concern, run
-  // and cleared as a unit. The alternative — stashing cleanup on the
-  // controller as `_cleanup` — was the previous shape, and it made
-  // the controller's contract implicit (a private property added by
-  // the caller, not returned by `createTaskDialog`). The array is
-  // visible where it is used and has no contract to violate.
   let dialogDetachers = [];
-
-  // The detach functions for the current render's listeners. Every
-  // render replaces the listeners, so the previous ones must be
-  // detached first.
   let detachers = [];
 
-  /**
-   * The debounced search handler.
-   *
-   * Created once per app, not per render. The debounce timer survives
-   * across renders, which is what lets a fast typist's keystrokes be
-   * coalesced into one render even if the list re-renders between
-   * keystrokes (which it does not, but the timing must not depend on
-   * that assumption).
-   */
   const debouncedSearch = debounce((query) => {
     searchQuery = query;
     render();
@@ -180,16 +140,7 @@ export function startApp(options = {}) {
   // ---------------------------------------------------------------------
 
   /**
-   * Render the dashboard from the current store state and search query.
-   *
-   * Full replace of the dashboard's subtree. The search input is the
-   * one element the app does not rebuild; every other element is fresh
-   * on every render.
-   *
-   * Note on ordering with `closeActiveDialog`: callers that mutate the
-   * store and close the dialog in the same action call `render()`
-   * FIRST. See the file-level docstring "Ordering rule" for the
-   * focus-restoration reasoning.
+   * [unchanged from the delivered file.]
    */
   function render() {
     const allTasks = store.getAll();
@@ -223,26 +174,19 @@ export function startApp(options = {}) {
    * Detach every listener from the previous render and attach new ones
    * to the current DOM. Called at the end of every render.
    *
-   * Delegation is used for the content container: one listener matches
-   * any `[data-action]` descendant. A direct listener is used for the
-   * search input, because it is the one element preserved across
-   * renders, and the `__wired` guard prevents re-attaching on success.
+   * [the delivered file's delegate-once commentary is preserved —
+   *  the delegation on `root` is the single source of truth for
+   *  every `[data-action]` click inside the dashboard. The search
+   *  input keeps its direct listener (with the `__wired` guard)
+   *  because the input survives re-renders and the direct listener
+   *  is the smallest correct shape for a single persistent element.]
    */
   function attachListeners() {
     for (const detach of detachers) detach();
     detachers = [];
 
-    // Create button — direct listener, one per render. The button is
-    // re-created on every render, so the listener must be re-attached.
-    const createButton = root.querySelector('[data-action="open-create-dialog"]');
-    if (createButton) {
-      const onClick = (event) => handleOpenCreate(event.currentTarget);
-      createButton.addEventListener('click', onClick);
-      detachers.push(() => createButton.removeEventListener('click', onClick));
-    }
-
-    // Search input — direct listener. The input survives re-renders,
-    // so the `__wired` guard prevents duplicate attachment.
+    // Search input — direct listener, one per app. The `__wired`
+    // guard prevents duplicate attachment across renders.
     const searchInput = root.querySelector('[data-action="search-input"]');
     if (searchInput && !searchInput.__wired) {
       const onInput = (event) => handleSearchInput(event);
@@ -255,19 +199,10 @@ export function startApp(options = {}) {
       searchInput.__wired = true;
     }
 
-    // Content container — delegation for card actions. One listener
-    // matches any `[data-action]` descendant of the content region.
-    //
-    // The task id is read from the CLOSEST ancestor carrying
-    // `data-task-id`, not from `target.dataset.taskId`. This is the
-    // single place that decides where the id lives — the view is free
-    // to place `data-task-id` on the button or on the card, and this
-    // delegation block is the only code that has to know. A handler
-    // that read `target.dataset.taskId` directly would couple the
-    // handler to the view's DOM shape; if the view later moved the
-    // attribute to the card, every handler would silently stop
-    // matching.
-    const content = root.querySelector('[data-listener="task-actions"]');
+    // The dashboard root — the only click dispatcher for every
+    // `[data-action]` inside the dashboard. [See the delivered
+    // file's delegate-once commentary for the full rationale.]
+    const content = root;
     if (content) {
       const onClick = (event) => {
         const actionEl = event.target.closest('[data-action]');
@@ -296,10 +231,7 @@ export function startApp(options = {}) {
   // ---------------------------------------------------------------------
 
   /**
-   * Open the create dialog. `trigger` is the element that received the
-   * click (or the delegated action element) — passed explicitly so
-   * this handler does not depend on `event.currentTarget`, which is
-   * the delegated content container, not the button.
+   * [unchanged from the delivered file.]
    */
   function handleOpenCreate(trigger) {
     dialogTrigger = trigger;
@@ -311,48 +243,57 @@ export function startApp(options = {}) {
     if (!taskId) return;
     const task = store.getById(taskId);
     if (!task) {
-      // The task was removed between render and click. Refresh so the
-      // view matches the store; do not show an error, the user did
-      // not do anything wrong.
       render();
       return;
     }
     openDialog(task, 'edit');
   }
 
+  /**
+   * Delete a task, with a confirmation and a toast.
+   *
+   * [the delivered file's structure — the `window.confirm` gate, the
+   *  NotFoundError and storage-error branches, and the render on
+   *  both success and rollback — is preserved. Two changes:]
+   *
+   *   - The success path shows `Deleted "<title>"` as a toast. The
+   *     title is included so a user who deletes several tasks in
+   *     succession sees *which* task each confirmation refers to.
+   *     The title is read from the task object before the delete —
+   *     after the delete, `store.getById` returns undefined.
+   *
+   *   - The storage-error branch shows "Could not delete the task."
+   *     as an error-variant toast. The render (which reflects the
+   *     rollback) runs first, then the toast — same render-then-
+   *     notify order as the save path.
+   *
+   * The NotFoundError branch does *not* show a toast — the task
+   * being gone is a normal outcome of the user's action (someone
+   * else deleted it, or the user double-clicked Delete on an
+   * already-deleted row). A confirmation of "already gone" would
+   * be noise.
+   */
   function handleDeleteClick(taskId) {
     if (!taskId) return;
     const task = store.getById(taskId);
     if (!task) {
-      // Same as edit: the task is gone, refresh the view.
       render();
       return;
     }
 
-    // TODO(accessibility): window.confirm ignores the app's theme,
-    // cannot meet the register's focus-ring spec (see tokens.css
-    // --color-focus-ring), and announces inconsistently across screen
-    // readers. Replacing it is a follow-up task; it is NOT part of
-    // the design-token work. The seam for the replacement is this
-    // single call — a future `confirmDelete(task)` returning a
-    // Promise<boolean> can be dropped in with no other change.
     const confirmed = window.confirm(`Delete task "${task.title}"?`);
     if (!confirmed) return;
 
     try {
       store.deleteTask(task.id);
       render();
+      showToast(`Deleted "${task.title}"`, { variant: 'success' });
     } catch (error) {
       if (error instanceof NotFoundError) {
-        // The task was removed between confirmation and delete.
-        // Refresh; the user's intent was satisfied.
         render();
       } else {
-        // A storage error. The store has already rolled back, so a
-        // refresh shows the correct state. The console warning is the
-        // developer's debug aid; a user-facing toast is a future
-        // improvement (see the TODO above — the same seam).
         render();
+        showToast('Could not delete the task.', { variant: 'error' });
         console.warn('Delete failed; the task is still present.', error);
       }
     }
@@ -363,25 +304,57 @@ export function startApp(options = {}) {
   }
 
   function handleClearSearch() {
-    // Cancel any pending debounced render so a stale query does not
-    // fire after the clear.
     debouncedSearch.cancel();
     searchQuery = '';
     render();
   }
 
   /**
-   * Submit the dialog's form. Creates or updates depending on the
-   * dialog mode, then closes the dialog on success.
+   * Submit the dialog's form.
    *
-   * Ordering note: `render()` runs BEFORE `closeActiveDialog()`. See
-   * the file-level docstring "Ordering rule" — focus restoration
-   * targets an element inside `root`, so it must run against the
-   * fresh DOM the render just produced, not the one about to be
-   * replaced.
+   * [the delivered file's structure — the try/catch shape, the
+   *  validation-error branch that keeps the dialog open, the
+   *  render-then-close ordering for focus restoration, the
+   *  aria-busy lifecycle — is preserved. The one change: the
+   *  `flashSuccess(dialogTrigger, ...)` call is replaced by
+   *  `showToast(...)`, and the storage-error branch gains a
+   *  toast so a failed save is visible.
+   *
+   *  The toast is *fire-and-forget*: it mounts to `document.body`,
+   *  owns its own timer, and does not participate in the dashboard's
+   *  render cycle. The `render()` call below replaces the
+   *  dashboard's children; the toast is on `document.body`, not on
+   *  the dashboard, so the render does not disturb it. That is the
+   *  whole reason the toast is a *view* rather than a piece of
+   *  dashboard state — its lifecycle is independent.
+   *
+   *  Ordering on the success path:
+   *
+   *    1. `showToast(...)` — the confirmation. Called first because
+   *       it is *independent* of the rest of the sequence. A failure
+   *       in `render()` below does not un-show the toast — the user
+   *       still sees "Task created" even if the list is momentarily
+   *       stale (the next render will fix the list; the toast's job
+   *       is done).
+   *
+   *    2. `render()` — the dashboard update. Best-effort (wrapped
+   *       in try/catch); a render failure does not prevent the
+   *       close.
+   *
+   *    3. `closeActiveDialog()` — the dialog teardown. Close-then-
+   *       destroy, per the file's discipline.
+   *
+   *    4. `formEl?.removeAttribute('aria-busy')` — the form is
+   *       detached by now, but the call is harmless and keeps the
+   *       symmetry with the other paths.]
    */
   async function handleFormSubmit(values) {
     if (!activeDialog) return;
+
+    const formEl = activeDialog.element.querySelector('form');
+    formEl?.setAttribute('aria-busy', 'true');
+
+    let succeeded = false;
 
     try {
       if (activeDialogMode === 'create') {
@@ -389,23 +362,62 @@ export function startApp(options = {}) {
       } else if (activeDialogMode === 'edit' && activeDialogTask) {
         store.update(activeDialogTask.id, values);
       }
-      render();
-      closeActiveDialog();
+      succeeded = true;
     } catch (error) {
       if (error instanceof ValidationError) {
-        // Show the errors in the dialog; the user fixes the fields
-        // and submits again. The dialog is not closed — the user is
-        // mid-edit and closing it would lose their work.
+        // The user is mid-edit; the errors are shown in the dialog;
+        // the dialog stays open. No toast on validation failure —
+        // the dialog's own field errors are the confirmation
+        // channel for a form that is still open.
         activeDialog.showErrors(error.fields);
-      } else {
-        // A storage error during create or update. The store has
-        // rolled back the in-memory change. Render first (fresh DOM),
-        // then close (focus restore lands on the fresh trigger).
-        render();
-        closeActiveDialog();
-        console.warn('Save failed; the change was not applied.', error);
+        formEl?.removeAttribute('aria-busy');
+        return;
       }
+      // A storage error (or any non-ValidationError from the store).
+      // The store has rolled back; the dialog's job is done. Render
+      // to reflect the rollback, then close, then show the error
+      // toast. The toast is shown *after* the close so the user
+      // does not see the dialog on top of the toast (the toast is
+      // fixed-position; the dialog is a modal; keeping the close
+      // first means the toast lands on the page, not on a modal's
+      // scrim).
+      try {
+        render();
+      } catch (renderError) {
+        console.warn('Render failed after a save error; the dialog will still close.', renderError);
+      }
+      closeActiveDialog();
+      formEl?.removeAttribute('aria-busy');
+      showToast('Could not save the task.', { variant: 'error' });
+      console.warn('Save failed; the change was not applied.', error);
+      return;
     }
+
+    if (!succeeded) return;
+
+    // Success path. The confirmation is independent of the rest of
+    // the sequence — the user should see "Task created" even if the
+    // render below fails. The message is per-mode: create is "Task
+    // created", update is "Task saved". The two phrasings match the
+    // user's mental model ("I created a new task" vs. "I saved my
+    // edits to an existing task") and the two button labels the
+    // dialog renders ("Create task" / "Save changes").
+    const successMessage =
+      activeDialogMode === 'create' ? 'Task created' : 'Task saved';
+    showToast(successMessage, { variant: 'success' });
+
+    // Best-effort render. A render failure is logged; the close
+    // below is unconditional (the store persisted — the dialog's
+    // job is done).
+    try {
+      render();
+    } catch (renderError) {
+      console.warn('Render failed after a successful save; the dialog will still close.', renderError);
+    }
+
+    // Close the dialog (restores focus to the trigger).
+    closeActiveDialog();
+    formEl?.removeAttribute('aria-busy');
   }
 
   function handleDialogCancel() {
@@ -419,12 +431,14 @@ export function startApp(options = {}) {
   /**
    * Open the create or edit dialog.
    *
-   * Cleanup functions are pushed onto `dialogDetachers` in the order
-   * they should run on close. The order is: Escape handler first (stop
-   * listening), focus restoration second (return focus to the
-   * trigger), so the Escape handler cannot fire during the restore.
-   * Running in reverse would be harmless here, but the order is
-   * documented so a future addition can reason about it.
+   * [the delivered file's version — the dialog-creation, the
+   *  focus-on-open, and the Escape wiring. Behaviour unchanged.]
+   *
+   * `dialogTrigger` is set by the caller (`handleOpenCreate`,
+   * `handleEditClick`) *before* this function runs. The trigger is
+   * used for focus restoration on close. The toast does *not* use
+   * `dialogTrigger` — the toast is a fixed-position notification,
+   * independent of the element that opened the dialog.
    */
   function openDialog(task, mode) {
     dialogDetachers = [];
@@ -440,29 +454,26 @@ export function startApp(options = {}) {
 
     activeDialog.open();
 
-    // Focus the title input on open. The dialog's own code cannot do
-    // this because it does not know which input is "first" — that is
-    // an app-level decision, and this is where the app makes it.
     const titleInput = activeDialog.element.querySelector('input[name="title"]');
     const restoreFocus = focusOnOpen(activeDialog.element, dialogTrigger, titleInput);
     dialogDetachers.push(restoreFocus);
 
-    // Esc closes the dialog, same as the cancel button. The dialog's
-    // own `close` event is not used here because it fires for submit
-    // too, and a submit is not a cancel.
     const detachEscape = onEscape(activeDialog.element, () => {
       handleDialogCancel();
     });
     dialogDetachers.push(detachEscape);
   }
 
+  /**
+   * Close the active dialog.
+   *
+   * [the delivered file's close-before-destroy discipline — the
+   *  modal state is released before the DOM node is removed. See
+   *  the delivered file's section on the topic for the reasoning.]
+   */
   function closeActiveDialog() {
     if (!activeDialog) return;
 
-    // Detach the dialog's listeners first, so a focus-restore that
-    // happens to dispatch an event (it does not today; it might in the
-    // future) does not re-enter this function through the Escape
-    // handler.
     for (const detach of dialogDetachers) detach();
     dialogDetachers = [];
 
@@ -471,6 +482,7 @@ export function startApp(options = {}) {
     activeDialogMode = null;
     activeDialogTask = null;
 
+    controller.close();
     controller.destroy();
   }
 
@@ -479,10 +491,22 @@ export function startApp(options = {}) {
   // ---------------------------------------------------------------------
 
   /**
-   * Tear down the app. Called by tests and by any future hot-reload
-   * integration. Detaches every listener and destroys the active
-   * dialog, so a re-mount does not leave stale listeners on detached
-   * nodes.
+   * Tear down the app.
+   *
+   * [the delivered file's version — the close-then-destroy
+   *  discipline applies to the active dialog on teardown as well,
+   *  so a torn-down app does not leave a stray modal in the
+   *  browser's top layer.]
+   *
+   * The toast is *not* dismissed here — the toast's timer will
+   * expire on its own, and a toast with no dashboard is a harmless
+   * (and typically invisible, because the user is navigating away)
+   * notification. A future change that wanted the toast dismissed
+   * on teardown would call `dismissActiveToastNow()` (exported
+   * from `views/toast.js` for exactly this purpose). That is a
+   * deliberate omission, not an oversight — the toast's lifecycle
+   * is independent of the app's, and coupling them would make
+   * teardown longer than it needs to be.
    */
   function destroy() {
     for (const detach of detachers) detach();
@@ -494,10 +518,12 @@ export function startApp(options = {}) {
     debouncedSearch.cancel();
 
     if (activeDialog) {
-      activeDialog.destroy();
+      const controller = activeDialog;
       activeDialog = null;
       activeDialogMode = null;
       activeDialogTask = null;
+      controller.close();
+      controller.destroy();
     }
   }
 

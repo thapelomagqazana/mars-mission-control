@@ -819,6 +819,28 @@ textarea {
   background: var(--color-accent-hover);
 }
 
+/* The persistent "Create task" affordance in the header. Its visual
+ * weight is secondary to the title (it is not the primary action on
+ * the page — the page is a task list), but it is present at every
+ * scroll position and every state. The button uses the accent colour
+ * and a rounded shape, matching the empty state's action for visual
+ * consistency across the two create affordances. */
+.dashboard__create-button {
+  margin-inline-start: auto;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
+  flex-shrink: 0;
+}
+
+.dashboard__create-button:hover {
+  background: var(--color-accent-hover);
+}
+
 /* ============================================================
  * 4. Utilities
  * ============================================================ */
@@ -833,6 +855,90 @@ textarea {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* --- Toast region ----------------------------------------- */
+/*
+ * The toast region is a fixed-position host in the bottom-right
+ * corner of the viewport. It sits above the dashboard (`--z-header`
+ * is 10; the toast is at `--z-toast`, a future ladder entry above
+ * the header but below dialogs). For today, the toast uses
+ * `--z-header + 1` via a calc — a future change that added a
+ * `--z-toast` token would replace the calc. [See the note below.]
+ *
+ * Why bottom-right: the top-right is where the header's create
+ * button is, and the top-left is the mission title. The bottom
+ * corners are free, and bottom-right is the conventional position
+ * for transient notifications in western UIs.
+ *
+ * `pointer-events: none` on the region — the toast does not
+ * intercept clicks on the dashboard beneath it. `pointer-events:
+ * auto` on the toast itself — a future dismiss button would be
+ * clickable without needing the region to be interactive.
+ */
+.toast-region {
+  position: fixed;
+  bottom: var(--space-5);
+  right: var(--space-5);
+  z-index: calc(var(--z-header) + 1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  pointer-events: none;
+  max-width: min(24rem, calc(100vw - 2 * var(--space-5)));
+}
+
+@media (max-width: 768px) {
+  .toast-region {
+    bottom: var(--space-4);
+    right: var(--space-4);
+    left: var(--space-4);
+    max-width: none;
+  }
+}
+
+.toast {
+  pointer-events: auto;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: var(--border-width-thin) var(--border-style-solid) var(--color-border-default);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  animation: toast-in var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+/* The variant classes. The colour accents the left border and the
+ * icon (if a future change added one) — the text stays in the
+ * primary colour so it is legible regardless of the variant. */
+.toast--success {
+  border-left: var(--border-width-medium) var(--border-style-solid) var(--color-success);
+}
+
+.toast--info {
+  border-left: var(--border-width-medium) var(--border-style-solid) var(--color-accent);
+}
+
+.toast--error {
+  border-left: var(--border-width-medium) var(--border-style-solid) var(--color-danger);
+}
+
+/* The enter animation. The reduced-motion block in tokens.css
+ * neutralises the duration; the animation's `from` state is the
+ * only thing that would be visible, and it commits to the `to`
+ * state immediately (0.01ms). That is the correct degradation —
+ * no motion, but the toast still appears. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ============================================================

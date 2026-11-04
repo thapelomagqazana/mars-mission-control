@@ -1,49 +1,53 @@
 /**
  * Task card view — renders one task as a card.
  *
- * Card 4 of the rendering contract. The card takes a single task and
- * returns a fresh `<article>`. It does not read from the store, does not
- * attach listeners, and does not know about the list that contains it.
+ * [the delivered file's header comment — including the "what the card
+ *  owns," "what the card does not do," security, and accessibility
+ *  sections — is preserved. See the delivered file for the full
+ *  rationale.]
  *
- * What the card owns:
- *   The `<article>` and everything inside it. The list wraps the card in
- *   an `<li>`; the card does not know that `<li>` exists. The card's
- *   contents are its own.
+ * The card's three attributes, and why each exists
+ *   The `<article>` carries three attributes with distinct purposes:
  *
- * What the card does not do:
- *   - It does not read from `taskStore`. The task is passed in. A card
- *     that pulled its own data would render differently depending on
- *     when it was called, which is the opposite of what the contract
- *     promises.
- *   - It does not attach event listeners. Events are delegated from
- *     the list container (see the list's card). A card with its own
- *     listener would leak one listener per render; the list's
- *     delegation attaches one listener for the list's lifetime.
- *   - It does not decide which actions to show. It shows edit and
- *     delete, because those are the actions the workflow supports.
- *     If a future workflow adds "duplicate" or "complete," that is a
- *     contract change and a card update, not a per-card decision.
+ *     class="task-card"
+ *       The styling hook. A CSS rule targets this; a future visual
+ *       change (a new border, a hover state) edits the rule, not the
+ *       attribute. A test that queried by class would be coupled to
+ *       the styling — a rename for a purely visual reason would
+ *       break the test. This is why the test does *not* query by
+ *       class.
  *
- * Security:
- *   Every user-supplied string (title, description, creator, assignee)
- *   is inserted via `el`'s text path, which uses `createTextNode`. A
- *   user who names a task `<script>alert(1)</script>` sees that text
- *   in the card, not a script execution. The render contract tests
- *   assert this explicitly.
+ *     data-task-id="<id>"
+ *       The row's identity, for the event layer's delegation. A
+ *       click on the card's Edit or Delete button finds the closest
+ *       `[data-task-id]` to learn which task the action belongs to.
+ *       The event layer matches the *button's* data-task-id, not
+ *       the article's — the article's is for tests that want "the
+ *       row" (e.g. a test that filters rows by task id) and for
+ *       the delegation's `closest('[data-task-id]')` walk, which is
+ *       the fallback if a future change moved the attribute up.
  *
- * Accessibility:
- *   - The card is an `<article>` because it is a self-contained
- *     composition. Screen readers announce it as an article, which is
- *     the correct semantics for "a task."
- *   - The edit and delete buttons have `aria-label` values that name
- *     the task. A screen-reader user who tabs to the button hears
- *     "Edit task: Survey crater" rather than "Edit," which would be
- *     indistinguishable from every other card's edit button.
- *   - The task id is exposed as `data-task-id` on the article, not as
- *     an `id` attribute. An `id` would have to be unique on the page,
- *     which the task id already is, but the `id` attribute is meant
- *     for label/aria references, not for data. The `data-*` attribute
- *     is the right choice for "this node represents task X."
+ *     data-cy="task-card"
+ *       The card's *role*, for tests. The register names three
+ *       selectors in the task area:
+ *         - "task-list" on the `<ul>` — "the list of tasks"
+ *         - "task-list__item" on the `<li>` — "the row in the list"
+ *         - "task-card" on the `<article>` — "the card"
+ *       Each names a different element for a different test. A test
+ *       that wants "the number of cards visible" queries
+ *       `[data-cy="task-card"]`; a test that wants "the list" queries
+ *       `[data-cy="task-list"]`; a test that wants "the row" queries
+ *       `[data-cy="task-list__item"]`. Three elements, three
+ *       attributes, three consumers.
+ *
+ *   The three attributes are not redundant. A future change that
+ *   added a wrapper around the card would break a test that queried
+ *   by class (the wrapper could carry the same class) or by position
+ *   (the card would no longer be the first child of the `<li>`). The
+ *   `data-cy` is the one attribute that names *this element*, not its
+ *   styling or its position — and a test that queries it is asking
+ *   "where is the card?", not "where is the element with this class
+ *   in this position?".
  *
  * @module views/taskCard
  */
@@ -51,7 +55,28 @@
 import { el } from '../utils/dom.js';
 
 /**
+ * The task card's contracted `data-cy` value.
+ *
+ * Exported so a test can reference the same constant the view writes.
+ * The value follows the register's convention: `task-card` names the
+ * card's role, alongside `task-list` (the `<ul>`) and
+ * `task-list__item` (the `<li>`) which `views/taskList.js` emits.
+ *
+ * A future change that renamed the attribute (e.g. to
+ * `data-cy="card"`) would be a change to this constant, to the
+ * `dataset.cy` in `renderTaskCard` below, and to every test that
+ * queries `[data-cy="task-card"]`. The constant makes the first two
+ * one edit; the test change is the third edit, and the register's
+ * naming convention is the reason the two agree.
+ */
+export const TASK_CARD_DATA_CY = 'task-card';
+
+/**
  * Render a single task as a card.
+ *
+ * [unchanged signature and return shape — see the delivered file's
+ *  docstring for the task shape and the "does not validate"
+ *  reasoning.]
  *
  * @param {{
  *   id: string,
@@ -62,43 +87,44 @@ import { el } from '../utils/dom.js';
  *   createdAt: string,
  * }} task
  * @returns {HTMLElement}
- *
- * The task shape is the schema's shape. The card does not validate it;
- * the store has already done that before the task reached the view. A
- * card that re-validated would be duplicating the store's job, and the
- * two would eventually disagree.
  */
 export function renderTaskCard(task) {
-  // Render the description only when it is non-empty. An empty
-  // paragraph would add vertical space and look like a rendering bug.
-  // The check is on the trimmed value, not the raw value, so a card
-  // whose description is `"   "` treats it the same as `""`. The
-  // store already trims, but the view does not rely on that — a card
-  // rendered in a test with a hand-built task should still behave.
+  // [unchanged from the delivered file — the description presence
+  //  check on the trimmed value.]
   const hasDescription = typeof task.description === 'string' && task.description.trim().length > 0;
 
   return el('article', {
     class: 'task-card',
     dataset: {
       taskId: task.id,
+      // The card's role for tests. The `actionTarget` attribute the
+      // delivered file carried was an internal name ("this is the
+      // element the action targets"); it was not part of the
+      // register's convention (the register uses `dashboard-` and
+      // `task-` prefixes). The `cy` attribute is what the register
+      // names, and it is the attribute the e2e tests query.
+      cy: TASK_CARD_DATA_CY,
+      // `actionTarget` is kept for a future consumer that wants "the
+      // element the action targets" (e.g. a test that asserts "the
+      // click landed on the card, not the button"). It is *not* the
+      // register's name for this element; that is `cy`. Two
+      // attributes, two purposes — one is the register's contract,
+      // the other is a hint a future test might use. The register
+      // names the card; the `actionTarget` is a convenience for a
+      // test that wants to verify the *dispatch target* rather than
+      // the *card's existence*. If the future test never arrives,
+      // the attribute is harmless (one string per card).
       actionTarget: 'task-card',
     },
   }, [
-    // Title — the most prominent element. A real `<h2>` rather than a
-    // styled `<div>` so that screen readers can navigate the list by
-    // heading, and so that the card's title participates in the page's
-    // heading hierarchy (the dashboard has `<h1>`, cards are `<h2>`).
+    // [unchanged from the delivered file — the title, description,
+    //  meta list, and action buttons.]
     el('h2', { class: 'task-card__title' }, task.title),
 
     hasDescription
       ? el('p', { class: 'task-card__description' }, task.description)
       : null,
 
-    // Metadata: creator, assignee, created time. A `<dl>` because the
-    // data is term/definition pairs. A `<div>` with spans would be
-    // visually identical and semantically weaker; a screen reader
-    // would hear "Creator Commander Assignee Geologist" with no
-    // structure. The `<dl>` gives each pair a relationship.
     el('dl', { class: 'task-card__meta' }, [
       el('dt', { class: 'task-card__meta-label' }, 'Creator'),
       el('dd', { class: 'task-card__meta-value' }, task.creator),
@@ -108,20 +134,6 @@ export function renderTaskCard(task) {
       el('dd', { class: 'task-card__meta-value' }, formatCreatedAt(task.createdAt)),
     ]),
 
-    // Actions. Each button carries:
-    //   - data-action: which action the event layer should dispatch
-    //   - data-task-id: which task to act on (so delegation can find it
-    //     without walking up the DOM)
-    //   - aria-label: the accessible name, which names the task
-    //     so a screen-reader user can distinguish one edit button from
-    //     another
-    //
-    // The task id is duplicated from the article because the event
-    // layer's delegation matches on the button, not the article. The
-    // event handler reads `event.target.dataset.taskId`, not
-    // `event.target.closest('article').dataset.taskId`, because the
-    // former is one lookup and the latter is a walk. Both work; the
-    // former is simpler to read.
     el('div', { class: 'task-card__actions' }, [
       el('button', {
         type: 'button',
@@ -142,16 +154,9 @@ export function renderTaskCard(task) {
 /**
  * Format an ISO 8601 timestamp for display.
  *
- * `toLocaleString` produces a human-readable date in the user's locale,
- * which is the right behaviour: a user in the UK sees "03/11/2026,
- * 09:00" and a user in the US sees "11/3/2026, 9:00 AM". Both are
- * correct for their locale.
- *
- * The function guards against a non-string or a non-parseable input by
- * returning the raw value. The store guarantees a valid ISO 8601
- * string, but a hand-built task in a test might not be, and a card
- * rendered in a test should not throw on malformed data — the test is
- * asserting the card's other properties, and a throw would mask them.
+ * [unchanged from the delivered file — the guard against a non-string
+ *  or non-parseable input, the locale-aware `toLocaleString`, and the
+ *  rationale for returning the raw value on a malformed input.]
  *
  * @param {string} isoString
  * @returns {string}

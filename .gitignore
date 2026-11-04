@@ -92,3 +92,17 @@ mars-mission-control.zip
 .eslintcache
 .stylelintcache
 .cache-loader/
+
+# Cypress-generated artefacts. The directory names match the
+# `screenshotsFolder`, `videosFolder`, `downloadsFolder` settings in
+# `cypress.config.js`, and the `reporterOptions.mochaFile` directory
+# in the same config. Screenshots and videos are captured on failure
+# for the developer's immediate inspection; a reviewer wanting to see
+# a failure's artefacts reads the CI run's uploaded artefact, not a
+# file in the repository. Keeping the directories out of the
+# repository keeps the repo size bounded and the code review focused
+# on the code.
+tests/screenshots/
+tests/videos/
+tests/downloads/
+tests/results/
