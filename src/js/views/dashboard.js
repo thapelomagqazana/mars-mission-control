@@ -7,6 +7,33 @@
  * to say "these regions exist, in this order, with these containers" so
  * that the child views have a stable place to write.
  *
+ * The Mars hero image:
+ *   The UI checklist (Stage 1) requires a Mars image in the dashboard.
+ *   The image is remote (an Unsplash URL), not bundled — the decision
+ *   is recorded in `docs/asset-handling.md`. The dashboard renders it
+ *   as an <img> with the exact URL from Stage 1 and an `alt` attribute
+ *   that describes it.
+ *
+ *   The `alt` attribute is the fallback: if the remote image fails to
+ *   load (blocked network, CDN outage, corporate proxy), the browser
+ *   shows the alt text in place of the image. The layout does not
+ *   depend on the image's dimensions, so a missing image is a missing
+ *   image, not a broken page. The evidence for this behaviour is
+ *   `evidence/mars-image-fallback.png` (from the asset-handling task's
+ *   negative check).
+ *
+ *   Why the image is remote and not bundled:
+ *     - Licensing: Unsplash's license allows use, but bundling would
+ *       redistribute the file.
+ *     - Size: the hero image is large; bundling inflates the build.
+ *     - Swap-ability: a URL can change without a rebuild.
+ *     - Decorative role: the image is decorative; the app's function
+ *       does not depend on it.
+ *
+ *   The URL is a string constant, not an import. The asset rule
+ *   (`asset/resource` in `webpack.config.js`) would catch a bundled
+ *   image; the Mars image is not imported, so the rule does not apply.
+ *
  * Why the dashboard owns the regions and not the contents:
  *   The dashboard is re-rendered on every application render. If it
  *   also owned the contents, every render would throw away the
@@ -29,6 +56,38 @@
 import { el } from '../utils/dom.js';
 
 /**
+ * The Mars hero image URL, from the Stage 1 UI checklist.
+ *
+ * Defined as a constant so the URL has a name in the code and the test
+ * can assert the constant's value. A future change to the image is a
+ * change to this constant, the `alt` text (if the new image needs a
+ * different description), `docs/asset-handling.md`, and the Stage 1
+ * record, in the same commit.
+ *
+ * The URL is the exact URL from Stage 1, not a "similar" image. The
+ * asset-handling test asserts the dashboard's source contains
+ * `unsplash.com` and `https://`; the exact URL is recorded in
+ * `docs/asset-handling.md`.
+ */
+const MARS_IMAGE_URL =
+  'https://images.unsplash.com/photo-1614728894747-a83421e2b9c9?auto=format&fit=crop&w=1600&q=80';
+
+/**
+ * The Mars hero image's alt text.
+ *
+ * Shown by the browser when the remote image fails to load. The text
+ * describes the image so a user who cannot see it (broken image,
+ * screen reader, text-only browser) knows what it would have been.
+ *
+ * The text is not a decorative alt ("hero image"); it is a description
+ * of what the image shows. A decorative image would use `alt=""` (the
+ * empty alt), which tells the screen reader to skip it. The Mars image
+ * is thematic, not decorative in the accessibility sense — a user who
+ * cannot see it benefits from knowing what it is.
+ */
+const MARS_IMAGE_ALT = 'The surface of Mars, with a crater in the foreground';
+
+/**
  * Render the top-level dashboard.
  *
  * @param {{
@@ -46,10 +105,14 @@ import { el } from '../utils/dom.js';
  *
  * The four regions are:
  *
- *   [data-region="header"]  — mission title, sticky, contains search
+ *   [data-region="header"]  — mission title, sticky
  *   [data-region="sidebar"] — commander info and live task counter
  *   [data-region="search"]  — search input and the results summary
  *   [data-region="list"]    — the task list, or the empty state
+ *
+ * The Mars image is rendered inside the header, above the title. It is
+ * decorative-but-themed; the `alt` text is the fallback when the
+ * remote image fails to load.
  *
  * Each region is a `<section>` with a `data-region` attribute. The
  * attribute is the ownership marker: a test that wants to assert "the
@@ -73,8 +136,29 @@ export function renderDashboard(state) {
       class: 'dashboard__header',
       dataset: { region: 'header' },
     }, [
-      el('h1', { class: 'dashboard__title' }, 'Mars Mission Control'),
-      el('p', { class: 'dashboard__subtitle' }, 'Task management for the mission crew'),
+      // The Mars image. It is the dashboard's visual anchor; the
+      // `alt` text is the fallback if the remote URL fails. The
+      // image is remote (not bundled); see the module docstring's
+      // "The Mars hero image" section for the decision.
+      el('img', {
+        class: 'dashboard__hero',
+        src: MARS_IMAGE_URL,
+        alt: MARS_IMAGE_ALT,
+        // Decorative loading: the image is not critical to the
+        // app's function; `loading="lazy"` defers the request until
+        // the image is near the viewport. The dashboard is the
+        // top-level view; the image is visible on first paint, so
+        // the lazy load does not delay it.
+        loading: 'lazy',
+        // `decoding="async"` lets the browser decode the image
+        // off the main thread; the page's rendering is not blocked
+        // by the decode.
+        decoding: 'async',
+      }),
+      el('div', { class: 'dashboard__heading' }, [
+        el('h1', { class: 'dashboard__title' }, 'Mars Mission Control'),
+        el('p', { class: 'dashboard__subtitle' }, 'Task management for the mission crew'),
+      ]),
     ]),
 
     el('div', { class: 'dashboard__body' }, [
