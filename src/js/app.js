@@ -8,56 +8,41 @@
  *  and close-before-destroy sections — is preserved. See the previous
  *  deliveries for the full rationale.]
  *
- * ## The success message
+ * ## Startup resilience (the P-03 / P-04 recovery boundary)
  *
- * The previous delivery used `flashSuccess(trigger, label)` to confirm
- * a save: the trigger button's text briefly changed to "Created" or
- * "Saved" for two seconds. That mechanism had two specific failure
- * cases:
+ * If `createTaskStore` throws a `StorageError` during construction
+ * (because the browser blocked localStorage, or because the adapter's
+ * `load()` threw a hard error), `startApp` catches the error and
+ * falls back to an in-memory store. The app starts, renders the empty
+ * state, and lets the user create tasks for the current session.
  *
- *   1. The empty state's "Create your first task" button is
- *      *removed* when the store has a task. The flash is a no-op
- *      when the trigger is detached (the `isConnected` guard), so
- *      the user who clicked the only visible affordance — the one
- *      in the empty state — gets no confirmation at all.
+ * This is the correct place for the fallback decision:
  *
- *   2. The trigger button may be off-screen after the list scrolls,
- *      so a user who scrolled the confirmation away does not see it.
- *      The flash is on the trigger; the trigger is wherever the
- *      user last touched, not wherever the user is now looking.
+ *   - The store's job is to *surface* load failures as `StorageError`
+ *     (its unit tests require this — they assert that a hard `load()`
+ *     failure is thrown, not swallowed).
  *
- * The fix is a toast — a transient notification mounted to
- * `document.body`, positioned fixed in the bottom-right corner,
- * visible regardless of the trigger's state or the user's scroll
- * position, and auto-dismissing after three seconds. See
- * `views/toast.js` for the view's lifecycle and its accessibility
- * contract (`role="status"`, `aria-live="polite"`, `aria-atomic`).
+ *   - The app's job is to *decide* whether a load failure is fatal.
+ *     For this app, it is not — a blank screen is worse than a
+ *     session-only task list.
  *
- * The toast replaces `flashSuccess`, not adds to it. Both mechanisms
- * would produce *two* confirmations for the same save — a bug, not a
- * feature. The `flashSuccess` function and its `SUCCESS_FLASH_MS`
- * constant are removed in the same commit.
+ *   - The recovery lives at the seam between the two, which is exactly
+ *     where `startApp` sits.
  *
- * The toast is called from three places:
- *
- *   - `handleFormSubmit` on create success: "Task created".
- *   - `handleFormSubmit` on update success: "Task saved".
- *   - `handleFormSubmit` on a storage error: "Could not save the task."
- *
- * And from `handleDeleteClick` for the same three shapes:
- *
- *   - delete success: `Deleted "<title>"`.
- *   - delete storage error: "Could not delete the task."
- *
- * The error variant uses the danger-tinted border so the toast's
- * colour matches the outcome. The view handles both variants; this
- * file just decides *when* to show which.
+ * Note: the P-03 corrupted-JSON case never reaches this fallback. The
+ * `initializeStore` module catches the `JSON.parse` `SyntaxError`
+ * internally and returns `[]`, so the store never throws for corrupted
+ * data — only for hard read failures. This distinction matters: the
+ * corrupted-data case is common and expected (a first-run install
+ * where the key is missing, a partially-written payload), while a hard
+ * read failure (private-browsing restrictions, quota errors on read)
+ * is rare and warrants the in-memory fallback.
  *
  * @module app
  */
 
 import { createTaskStore } from './store/taskStore.js';
-import { ValidationError, NotFoundError } from './store/errors.js';
+import { ValidationError, NotFoundError, StorageError } from './store/errors.js';
 import { renderDashboardFilled } from './views/dashboard.js';
 import { renderCounter } from './views/counter.js';
 import { renderTaskList } from './views/taskList.js';
@@ -95,7 +80,9 @@ function filterTasks(tasks, query) {
 /**
  * Boot the application.
  *
- * [the delivered file's signature and return shape are unchanged.]
+ * If the store fails to load from persistence, the app logs the
+ * failure and falls back to an in-memory store. The app always
+ * renders, even when persistence is unavailable.
  *
  * @param {{
  *   root?: HTMLElement,
@@ -110,7 +97,39 @@ function filterTasks(tasks, query) {
 export function startApp(options = {}) {
   const root = options.root || requireEl(document, '#app-root');
   const persistence = options.persistence || createStorageAdapter();
-  const store = createTaskStore(persistence);
+
+  // The store constructor throws `StorageError` if the adapter's
+  // `load()` throws. The E2E suite's "corrupted storage" test
+  // exercises this: it seeds unparseable bytes, which the
+  // `localStorageAdapter` returns as a raw string, which the
+  // `initializeStore` module *catches* and recovers from — so the
+  // store does NOT throw for that case. The fallback below is for
+  // the case where the adapter itself throws (e.g., a
+  // SecurityError on localStorage access in private browsing).
+  let store;
+  try {
+    store = createTaskStore(persistence);
+  } catch (error) {
+    if (error instanceof StorageError && error.operation === 'load') {
+      // The store could not load its initial state. Fall back to an
+      // in-memory store. The user can still use the app this
+      // session; their tasks will not survive a reload.
+      console.warn(
+        'App startup: Failed to load persisted tasks. ' +
+          'Starting with an in-memory fallback (tasks will not persist).',
+        error
+      );
+      store = createTaskStore({
+        load: () => [],
+        save: () => {}, // Swallow writes — persistence is unavailable.
+      });
+    } else {
+      // A non-storage error during store construction is a bug, not
+      // a persistence failure. Re-throw it so the startup error
+      // handlers can show the banner.
+      throw error;
+    }
+  }
 
   let searchQuery = '';
 
@@ -254,24 +273,10 @@ export function startApp(options = {}) {
    *
    * [the delivered file's structure — the `window.confirm` gate, the
    *  NotFoundError and storage-error branches, and the render on
-   *  both success and rollback — is preserved. Two changes:]
-   *
-   *   - The success path shows `Deleted "<title>"` as a toast. The
-   *     title is included so a user who deletes several tasks in
-   *     succession sees *which* task each confirmation refers to.
-   *     The title is read from the task object before the delete —
-   *     after the delete, `store.getById` returns undefined.
-   *
-   *   - The storage-error branch shows "Could not delete the task."
-   *     as an error-variant toast. The render (which reflects the
-   *     rollback) runs first, then the toast — same render-then-
-   *     notify order as the save path.
-   *
-   * The NotFoundError branch does *not* show a toast — the task
-   * being gone is a normal outcome of the user's action (someone
-   * else deleted it, or the user double-clicked Delete on an
-   * already-deleted row). A confirmation of "already gone" would
-   * be noise.
+   *  both success and rollback — is preserved. See the delivered
+   *  file for the full rationale on the two changes from the flash
+   *  version (success toast with the title, error toast on storage
+   *  failure).]
    */
   function handleDeleteClick(taskId) {
     if (!taskId) return;
@@ -315,38 +320,8 @@ export function startApp(options = {}) {
    * [the delivered file's structure — the try/catch shape, the
    *  validation-error branch that keeps the dialog open, the
    *  render-then-close ordering for focus restoration, the
-   *  aria-busy lifecycle — is preserved. The one change: the
-   *  `flashSuccess(dialogTrigger, ...)` call is replaced by
-   *  `showToast(...)`, and the storage-error branch gains a
-   *  toast so a failed save is visible.
-   *
-   *  The toast is *fire-and-forget*: it mounts to `document.body`,
-   *  owns its own timer, and does not participate in the dashboard's
-   *  render cycle. The `render()` call below replaces the
-   *  dashboard's children; the toast is on `document.body`, not on
-   *  the dashboard, so the render does not disturb it. That is the
-   *  whole reason the toast is a *view* rather than a piece of
-   *  dashboard state — its lifecycle is independent.
-   *
-   *  Ordering on the success path:
-   *
-   *    1. `showToast(...)` — the confirmation. Called first because
-   *       it is *independent* of the rest of the sequence. A failure
-   *       in `render()` below does not un-show the toast — the user
-   *       still sees "Task created" even if the list is momentarily
-   *       stale (the next render will fix the list; the toast's job
-   *       is done).
-   *
-   *    2. `render()` — the dashboard update. Best-effort (wrapped
-   *       in try/catch); a render failure does not prevent the
-   *       close.
-   *
-   *    3. `closeActiveDialog()` — the dialog teardown. Close-then-
-   *       destroy, per the file's discipline.
-   *
-   *    4. `formEl?.removeAttribute('aria-busy')` — the form is
-   *       detached by now, but the call is harmless and keeps the
-   *       symmetry with the other paths.]
+   *  aria-busy lifecycle — is preserved. See the delivered file
+   *  for the success/error toast ordering rationale.]
    */
   async function handleFormSubmit(values) {
     if (!activeDialog) return;
@@ -497,16 +472,6 @@ export function startApp(options = {}) {
    *  discipline applies to the active dialog on teardown as well,
    *  so a torn-down app does not leave a stray modal in the
    *  browser's top layer.]
-   *
-   * The toast is *not* dismissed here — the toast's timer will
-   * expire on its own, and a toast with no dashboard is a harmless
-   * (and typically invisible, because the user is navigating away)
-   * notification. A future change that wanted the toast dismissed
-   * on teardown would call `dismissActiveToastNow()` (exported
-   * from `views/toast.js` for exactly this purpose). That is a
-   * deliberate omission, not an oversight — the toast's lifecycle
-   * is independent of the app's, and coupling them would make
-   * teardown longer than it needs to be.
    */
   function destroy() {
     for (const detach of detachers) detach();

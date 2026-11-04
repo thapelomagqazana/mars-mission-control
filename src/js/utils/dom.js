@@ -10,32 +10,18 @@
  *   that used `innerHTML` would be a security defect waiting for user
  *   input to arrive. One helper, used everywhere, is one rule to audit.
  *
- * What this file is not:
- *   - Not a framework. There is no reactivity, no virtual DOM, no
- *     diffing. Full replace is the re-render strategy; these helpers
- *     make full replace cheap.
- *   - Not a template engine. Views compose elements by calling `el`.
- *   - Not a state container. Views receive state from the event layer.
+ * Security (The Two Doors):
+ *   There are exactly two ways user data can enter the DOM:
+ *   1. As a child (text). `el` and `replaceChildren` use
+ *      `document.createTextNode`. Text nodes cannot execute.
+ *   2. As an attribute value. `el` uses `setAttribute`. Attribute values
+ *      do not execute (unless the attribute is `onclick`, `onerror`, etc.).
  *
- * Security:
- *   `el` sets text with `textContent`, never `innerHTML`. User-supplied
- *   strings (task title, description, creator, assignee) are therefore
- *   inserted as text, not parsed as HTML. This is the single most
- *   important security property of the view layer: no user string can
- *   become markup.
- *
- *   The one place where HTML is trusted is `el`'s attribute handling:
- *   attribute *values* are set via `setAttribute`, which does not
- *   execute scripts. Attribute *names* are caller-controlled; a view
- *   passing `{ onclick: 'alert(1)' }` would set an event handler
- *   attribute. No view does this, and the render contract tests assert
- *   that rendered nodes carry no `onclick`-style attributes.
- *
- * Accessibility:
- *   The helpers do not enforce ARIA. They make it easy to set ARIA
- *   (via `'aria-live': 'polite'` in the attrs object), but the view's
- *   card decides what ARIA is needed. A helper that "added ARIA" would
- *   be guessing at intent.
+ *   To close the second door completely, `applyAttribute` explicitly
+ *   rejects attribute *keys* that start with "on" (case-insensitive).
+ *   A developer cannot accidentally pass `{ onclick: '...' }` to `el`,
+ *   even if the value came from a trusted source. Event listeners must
+ *   use `addEventListener` via the `delegate` helper.
  *
  * @module utils/dom
  */
@@ -45,8 +31,7 @@
  *
  * `false`, `null`, and `undefined` all mean "do not set this
  * attribute". `true` is intentionally not skipped — it means "set this
- * boolean attribute to the empty string". Extracted so the three loops
- * in `el` share one definition of "skip".
+ * boolean attribute to the empty string".
  *
  * @param {*} value
  * @returns {boolean}
@@ -59,9 +44,12 @@ function isSkippedAttributeValue(value) {
  * Apply a single attribute entry to an element.
  *
  * Handles the special cases (`class`/`className`, `dataset`, `style`)
- * and falls through to `setAttribute` for everything else. Extracted
- * from `el` so the branch chain lives in one small, readable function
- * instead of inside a loop inside a function.
+ * and falls through to `setAttribute` for everything else.
+ *
+ * Defensive check: Rejects event-handler attributes (`onclick`,
+ * `onerror`, etc.). This prevents an accidental injection if a view
+ * is refactored to use a dynamic attribute name. If an event is needed,
+ * it must be attached via `addEventListener` (see `delegate`).
  *
  * @param {HTMLElement} element
  * @param {string} key
@@ -69,6 +57,15 @@ function isSkippedAttributeValue(value) {
  */
 function applyAttribute(element, key, value) {
   if (isSkippedAttributeValue(value)) return;
+
+  // Reject inline event handlers (onclick, onmouseover, etc.).
+  // We use addEventListener for all events.
+  if (key.toLowerCase().startsWith('on')) {
+    throw new Error(
+      `Inline event handler attribute "${key}" is forbidden. ` +
+        `Use addEventListener or the delegate() helper instead.`
+    );
+  }
 
   if (key === 'class' || key === 'className') {
     element.className = String(value);
@@ -82,6 +79,8 @@ function applyAttribute(element, key, value) {
     applyStyle(element, value);
     return;
   }
+  
+  // If we get here, it's a normal attribute (id, href, aria-label, etc.)
   element.setAttribute(key, value === true ? '' : String(value));
 }
 
@@ -133,11 +132,13 @@ function applyStyle(element, style) {
  */
 function appendChild(element, child) {
   if (child === null || child === undefined) return;
-  if (typeof child === 'string') {
+  
+  if (typeof child === 'string' || typeof child === 'number') {
     // createTextNode, never innerHTML. This is the XSS guard.
-    element.appendChild(document.createTextNode(child));
+    element.appendChild(document.createTextNode(String(child)));
     return;
   }
+  
   element.appendChild(child);
 }
 
@@ -150,35 +151,19 @@ function appendChild(element, child) {
  * @returns {HTMLElement}
  *
  * Attribute handling:
- *   - `false`, `null`, and `undefined` values are skipped (no
- *     attribute is set). This lets a view write
- *     `{ disabled: isDisabled }` without a ternary.
- *   - `true` sets the attribute to the empty string, which is the
- *     HTML convention for boolean attributes.
- *   - `class` and `className` both set `className`. This matters
- *     because a view reader may use either word, and the helper
- *     should not make them guess.
+ *   - `false`, `null`, and `undefined` values are skipped.
+ *   - `true` sets the attribute to the empty string.
+ *   - `class` and `className` both set `className`.
  *   - `dataset` is an object; each key becomes a `data-*` attribute.
- *     This is the attribute the render contract uses to map a rendered
- *     node back to its owner (`data-region="..."`, `data-task-id=...`).
  *   - `style` is an object; each key is set via `style.setProperty`.
- *     String values for `style` are rejected because the string form
- *     is the one that invites CSS injection, and this helper is not
- *     going to be the place where that happens.
+ *   - Attributes starting with "on" are rejected (defense in depth).
  *   - Everything else is set via `setAttribute`.
  *
  * Children handling:
- *   - A string becomes a text node (via `document.createTextNode`,
- *     which is equivalent to `textContent` and never parses HTML).
- *     This is the XSS guard.
- *   - `null` and `undefined` are skipped. This lets a view write
- *     `condition ? el('p', {}, text) : null` in a children array
- *     without filtering.
- *   - A Node is appended as-is. `Node` is the check, not
- *     `HTMLElement`, because a view may reasonably append a
- *     `Text` node, a `DocumentFragment`, or an SVG element.
- *   - An array is flattened one level. Deeper nesting is a sign the
- *     view is doing too much; the caller should compose in stages.
+ *   - A string becomes a text node (via `document.createTextNode`).
+ *   - `null` and `undefined` are skipped.
+ *   - A Node is appended as-is.
+ *   - An array is flattened one level.
  */
 export function el(tag, attrs = {}, children = []) {
   const element = document.createElement(tag);
@@ -200,9 +185,7 @@ export function el(tag, attrs = {}, children = []) {
  *
  * `'backgroundColor'` becomes `'background-color'`, `'fontSize'` becomes
  * `'font-size'`, and `'--accent'` (a custom property) is returned
- * unchanged. The conversion is one-directional: a caller who writes
- * `'background-color'` already gets the right form, and the regex leaves
- * it alone.
+ * unchanged.
  *
  * @param {string} name
  * @returns {string}
@@ -232,7 +215,12 @@ export function replaceChildren(container, children) {
   const list = Array.isArray(children) ? children : [children];
   const nodes = list
     .filter((child) => child !== null && child !== undefined)
-    .map((child) => (typeof child === 'string' ? document.createTextNode(child) : child));
+    .map((child) => {
+      if (typeof child === 'string' || typeof child === 'number') {
+        return document.createTextNode(String(child));
+      }
+      return child;
+    });
   container.replaceChildren(...nodes);
 }
 
@@ -240,9 +228,7 @@ export function replaceChildren(container, children) {
  * Clear a container's children.
  *
  * Equivalent to `replaceChildren(container, [])`, provided as a named
- * function so the intent is obvious at the call site. `clear(el)` reads
- * as "empty this" where `replaceChildren(el, [])` reads as "replace the
- * children with nothing" — same behaviour, clearer intent.
+ * function so the intent is obvious at the call site.
  *
  * @param {Element} container
  */
@@ -258,9 +244,6 @@ export function clear(container) {
  * event to a specific node; if that node is gone, the wiring is wrong,
  * and the throw makes the mistake visible at the point of failure
  * rather than three callbacks later.
- *
- * The error message names the selector and the container's tag, which
- * is usually enough to find the missing node without a debugger.
  *
  * @param {Element | Document} root
  * @param {string} selector
@@ -293,12 +276,6 @@ export function findEl(root, selector) {
  * empty array, not `null`, when nothing matches, so a caller can iterate
  * without a null check.
  *
- * `querySelectorAll` returns a `NodeList`, which is array-like but does
- * not have array methods (`map`, `filter`, `forEach` is a NodeList
- * method in modern browsers, but not in all older ones). This helper
- * converts to a real array so the rest of the code can use array
- * methods without thinking about it.
- *
  * @param {Element | Document} root
  * @param {string} selector
  * @returns {Element[]}
@@ -317,11 +294,7 @@ export function findAllEl(root, selector) {
  * render; a list that delegates attaches one listener for the list's
  * lifetime.
  *
- * The returned function removes the listener. A caller that renders the
- * list once and never replaces it does not need to call the returned
- * function; a caller that replaces the list's root should. Documenting
- * the detach function as the return value makes the ownership of the
- * listener explicit.
+ * The returned function removes the listener.
  *
  * @param {Element} root - the container to listen on
  * @param {string} eventType - e.g. 'click', 'input'
@@ -347,11 +320,6 @@ export function delegate(root, eventType, selector, handler) {
  * fixed prefix and a counter are used. The counter is module-level and
  * monotonic; a form that re-renders gets fresh ids, which is correct
  * because the old inputs are gone.
- *
- * A view that built its own ids would eventually collide with another
- * view's ids, and the label would point at the wrong input — a subtle
- * accessibility bug that is hard to find because it does not break
- * anything visible.
  *
  * @param {string} prefix
  * @returns {string}

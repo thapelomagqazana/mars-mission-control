@@ -1,53 +1,40 @@
 /**
  * Task card view — renders one task as a card.
  *
- * [the delivered file's header comment — including the "what the card
- *  owns," "what the card does not do," security, and accessibility
- *  sections — is preserved. See the delivered file for the full
- *  rationale.]
+ * What the card owns:
+ *   The `<article>` wrapper and every element inside it. The card is a
+ *   pure display component: it receives a task object and returns a DOM
+ *   node. It does not read from the store, it does not validate input,
+ *   and it does not attach event listeners (the list handles delegation).
  *
- * The card's three attributes, and why each exists
- *   The `<article>` carries three attributes with distinct purposes:
+ * The card's attributes, and why each exists:
+ *   - class="task-card"
+ *     The styling hook. A CSS rule targets this; a future visual change
+ *     edits the CSS, not the markup.
+ *   - data-task-id="<id>"
+ *     The row's identity, used by the event layer's delegation (a click
+ *     finds the closest `[data-task-id]`) and by tests that want to assert
+ *     on a specific task.
+ *   - data-cy="task-card"
+ *     The card's role for tests (e.g., counting visible cards).
  *
- *     class="task-card"
- *       The styling hook. A CSS rule targets this; a future visual
- *       change (a new border, a hover state) edits the rule, not the
- *       attribute. A test that queried by class would be coupled to
- *       the styling — a rename for a purely visual reason would
- *       break the test. This is why the test does *not* query by
- *       class.
+ * Per-field selectors:
+ *   Every field inside the card has its own `data-cy`. This means a test
+ *   that wants to assert "the title of the card is X" can target
+ *   `[data-cy="task-card-title"]` without relying on CSS classes or DOM
+ *   position. The selectors are defined in `TASK_CARD_SELECTORS` below.
  *
- *     data-task-id="<id>"
- *       The row's identity, for the event layer's delegation. A
- *       click on the card's Edit or Delete button finds the closest
- *       `[data-task-id]` to learn which task the action belongs to.
- *       The event layer matches the *button's* data-task-id, not
- *       the article's — the article's is for tests that want "the
- *       row" (e.g. a test that filters rows by task id) and for
- *       the delegation's `closest('[data-task-id]')` walk, which is
- *       the fallback if a future change moved the attribute up.
+ * Security (The Escaping Boundary):
+ *   Every user-supplied string (title, description, creator, assignee)
+ *   is passed as a child to `el()`. The `el` helper uses
+ *   `document.createTextNode`, which treats the string as literal text.
+ *   No `innerHTML` is used. An XSS payload renders as a string, not code.
  *
- *     data-cy="task-card"
- *       The card's *role*, for tests. The register names three
- *       selectors in the task area:
- *         - "task-list" on the `<ul>` — "the list of tasks"
- *         - "task-list__item" on the `<li>` — "the row in the list"
- *         - "task-card" on the `<article>` — "the card"
- *       Each names a different element for a different test. A test
- *       that wants "the number of cards visible" queries
- *       `[data-cy="task-card"]`; a test that wants "the list" queries
- *       `[data-cy="task-list"]`; a test that wants "the row" queries
- *       `[data-cy="task-list__item"]`. Three elements, three
- *       attributes, three consumers.
- *
- *   The three attributes are not redundant. A future change that
- *   added a wrapper around the card would break a test that queried
- *   by class (the wrapper could carry the same class) or by position
- *   (the card would no longer be the first child of the `<li>`). The
- *   `data-cy` is the one attribute that names *this element*, not its
- *   styling or its position — and a test that queries it is asking
- *   "where is the card?", not "where is the element with this class
- *   in this position?".
+ * Accessibility:
+ *   The action buttons include the task title in their `aria-label`
+ *   (e.g., "Edit task: Check hull"). A screen-reader user hearing "Edit"
+ *   repeated five times in a list would not know which task each button
+ *   applies to. The title disambiguates them.
  *
  * @module views/taskCard
  */
@@ -55,28 +42,24 @@
 import { el } from '../utils/dom.js';
 
 /**
- * The task card's contracted `data-cy` value.
+ * The task card's contracted `data-cy` values.
  *
- * Exported so a test can reference the same constant the view writes.
- * The value follows the register's convention: `task-card` names the
- * card's role, alongside `task-list` (the `<ul>`) and
- * `task-list__item` (the `<li>`) which `views/taskList.js` emits.
- *
- * A future change that renamed the attribute (e.g. to
- * `data-cy="card"`) would be a change to this constant, to the
- * `dataset.cy` in `renderTaskCard` below, and to every test that
- * queries `[data-cy="task-card"]`. The constant makes the first two
- * one edit; the test change is the third edit, and the register's
- * naming convention is the reason the two agree.
+ * Exported so tests can reference the exact same strings the view writes.
+ * The naming convention follows the register: `task-card-<field>`.
  */
-export const TASK_CARD_DATA_CY = 'task-card';
+export const TASK_CARD_SELECTORS = Object.freeze({
+  card: 'task-card',
+  title: 'task-card-title',
+  description: 'task-card-description',
+  creator: 'task-card-creator',
+  assignee: 'task-card-assignee',
+  createdAt: 'task-card-created',
+  edit: 'task-card-edit',
+  delete: 'task-card-delete',
+});
 
 /**
  * Render a single task as a card.
- *
- * [unchanged signature and return shape — see the delivered file's
- *  docstring for the task shape and the "does not validate"
- *  reasoning.]
  *
  * @param {{
  *   id: string,
@@ -89,81 +72,123 @@ export const TASK_CARD_DATA_CY = 'task-card';
  * @returns {HTMLElement}
  */
 export function renderTaskCard(task) {
-  // [unchanged from the delivered file — the description presence
-  //  check on the trimmed value.]
-  const hasDescription = typeof task.description === 'string' && task.description.trim().length > 0;
+  // A description is "present" only if it contains non-whitespace
+  // characters. A description of "   " is treated exactly like "".
+  const description = normaliseText(task.description);
+  const hasDescription = description.length > 0;
 
   return el('article', {
     class: 'task-card',
     dataset: {
-      taskId: task.id,
-      // The card's role for tests. The `actionTarget` attribute the
-      // delivered file carried was an internal name ("this is the
-      // element the action targets"); it was not part of the
-      // register's convention (the register uses `dashboard-` and
-      // `task-` prefixes). The `cy` attribute is what the register
-      // names, and it is the attribute the e2e tests query.
-      cy: TASK_CARD_DATA_CY,
-      // `actionTarget` is kept for a future consumer that wants "the
-      // element the action targets" (e.g. a test that asserts "the
-      // click landed on the card, not the button"). It is *not* the
-      // register's name for this element; that is `cy`. Two
-      // attributes, two purposes — one is the register's contract,
-      // the other is a hint a future test might use. The register
-      // names the card; the `actionTarget` is a convenience for a
-      // test that wants to verify the *dispatch target* rather than
-      // the *card's existence*. If the future test never arrives,
-      // the attribute is harmless (one string per card).
-      actionTarget: 'task-card',
+      taskId: String(task.id),
+      cy: TASK_CARD_SELECTORS.card,
     },
   }, [
-    // [unchanged from the delivered file — the title, description,
-    //  meta list, and action buttons.]
-    el('h2', { class: 'task-card__title' }, task.title),
+    el('h2', {
+      class: 'task-card__title',
+      dataset: { cy: TASK_CARD_SELECTORS.title },
+    }, normaliseText(task.title)),
 
+    // If the description is empty/whitespace, the element is omitted
+    // entirely. Rendering an empty <p> leaves an unexplained gap in the
+    // layout. Hiding it is the honest representation of "no description".
     hasDescription
-      ? el('p', { class: 'task-card__description' }, task.description)
+      ? el('p', {
+          class: 'task-card__description',
+          dataset: { cy: TASK_CARD_SELECTORS.description },
+        }, description)
       : null,
 
     el('dl', { class: 'task-card__meta' }, [
       el('dt', { class: 'task-card__meta-label' }, 'Creator'),
-      el('dd', { class: 'task-card__meta-value' }, task.creator),
+      el('dd', {
+        class: 'task-card__meta-value',
+        dataset: { cy: TASK_CARD_SELECTORS.creator },
+      }, normaliseText(task.creator)),
+
       el('dt', { class: 'task-card__meta-label' }, 'Assignee'),
-      el('dd', { class: 'task-card__meta-value' }, task.assignee),
+      el('dd', {
+        class: 'task-card__meta-value',
+        dataset: { cy: TASK_CARD_SELECTORS.assignee },
+      }, normaliseText(task.assignee)),
+
       el('dt', { class: 'task-card__meta-label' }, 'Created'),
-      el('dd', { class: 'task-card__meta-value' }, formatCreatedAt(task.createdAt)),
+      el('dd', {
+        class: 'task-card__meta-value',
+        dataset: { cy: TASK_CARD_SELECTORS.createdAt },
+      }, formatCreatedAt(task.createdAt)),
     ]),
 
     el('div', { class: 'task-card__actions' }, [
       el('button', {
         type: 'button',
         class: 'task-card__action task-card__action--edit',
-        dataset: { action: 'edit-task', taskId: task.id },
-        'aria-label': `Edit task: ${task.title}`,
+        dataset: {
+          action: 'edit-task',
+          taskId: String(task.id),
+          cy: TASK_CARD_SELECTORS.edit,
+        },
+        'aria-label': `Edit task: ${normaliseText(task.title)}`,
       }, 'Edit'),
+
       el('button', {
         type: 'button',
         class: 'task-card__action task-card__action--delete',
-        dataset: { action: 'delete-task', taskId: task.id },
-        'aria-label': `Delete task: ${task.title}`,
+        dataset: {
+          action: 'delete-task',
+          taskId: String(task.id),
+          cy: TASK_CARD_SELECTORS.delete,
+        },
+        'aria-label': `Delete task: ${normaliseText(task.title)}`,
       }, 'Delete'),
     ]),
   ]);
 }
 
 /**
+ * Normalise a field to a display string.
+ *
+ * `trim()` collapses the whitespace-only case to '' — which the card
+ * then treats as absent. This is deliberate: a description of three
+ * spaces is indistinguishable from no description to a reader, so the
+ * DOM should not carry a difference the reader cannot see.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function normaliseText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/**
  * Format an ISO 8601 timestamp for display.
  *
- * [unchanged from the delivered file — the guard against a non-string
- *  or non-parseable input, the locale-aware `toLocaleString`, and the
- *  rationale for returning the raw value on a malformed input.]
+ * `Intl.DateTimeFormat` is used rather than `toLocaleString()` so the
+ * output is stable across environments. A locale-sensitive default can
+ * change between a developer's browser and CI, turning a display change
+ * into a test failure. The `dateStyle: 'medium'` and `timeStyle: 'short'`
+ * options produce a consistent, readable format (e.g., "Nov 3, 2026,
+ * 2:00 PM").
+ *
+ * If the timestamp is malformed or missing, the raw value is returned
+ * rather than throwing. A card that cannot render because its timestamp
+ * is odd is a worse failure than a card that shows the odd timestamp.
  *
  * @param {string} isoString
  * @returns {string}
  */
 function formatCreatedAt(isoString) {
-  if (typeof isoString !== 'string') return String(isoString);
+  if (typeof isoString !== 'string') return '';
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return isoString;
-  return date.toLocaleString();
+  
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(date);
+  } catch {
+    // Fallback in case `Intl` is unavailable (e.g., very old environments)
+    return isoString;
+  }
 }

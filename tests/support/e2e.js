@@ -3,22 +3,26 @@
  *
  * Why this file exists:
  *   Cypress runs the support file once per spec, before any test in
- *   that spec. The hooks here are the ones that must apply to every
- *   test in every spec: resetting the app's persisted state so tests
- *   do not leak into each other, and tolerating the one external
- *   dependency the app has (the remote Mars image, which is not
- *   under the test's control).
+ *   that spec. The hooks here are the ones that apply to every test
+ *   in every spec:
+ *
+ *     1. Reset the app's persisted state, so tests do not leak into
+ *        each other.
+ *     2. Tolerate the one external dependency the app has (the
+ *        remote Mars image), which is not under the test's control.
  *
  * What this file does not do:
- *   - Register custom commands. Those live in `commands.js`, which is
- *     imported below. The split keeps "global hooks" and "shared
- *     helpers" visible as separate concerns.
+ *   - Register custom commands. Those live in `commands.js`, imported
+ *     below. The split keeps "global hooks" and "shared helpers"
+ *     visible as separate concerns.
  *   - Seed state that only some specs need. A spec that needs a
- *     specific seed uses `cy.fixture(...)` and `cy.seedTasks(...)`
- *     in its own `beforeEach`. The global hook is for the state every
- *     spec needs (an empty store), not the state some specs want.
+ *     specific seed uses `cy.fixture(...)` and `cy.seedTasks(...)` in
+ *     its own `beforeEach` or test body. The global hook is for the
+ *     state every spec needs (an empty store), not the state some
+ *     specs want.
  *
- * State reset — the whole point of this file:
+ * State reset — how it works, and why both steps are required:
+ *
  *   Every test must start from a known state. The default is an empty
  *   store; a spec that needs a seeded state calls `cy.seedTasks(...)`
  *   explicitly. A test that depends on a previous test's state is a
@@ -26,26 +30,50 @@
  *   a shipped Cypress suite, and the one the isolation probe exists
  *   to catch.
  *
- *   The reset has two steps, both required:
+ *   The reset has two steps:
  *
  *     1. cy.visit('/') — load the app so the window exists under the
- *        app's origin. `cy.clearLocalStorage` and `cy.window()`
- *        both require a window; without a visit, the window is
- *        about:blank, which has no localStorage for the app's origin.
- *        A reset that runs against about:blank is a reset that does
- *        nothing, silently.
+ *        app's origin. `cy.window()` and localStorage access both
+ *        require a window; without a visit, the window is
+ *        about:blank, which has no localStorage for the app's
+ *        origin. A reset against about:blank is a reset that runs
+ *        against the wrong storage and silently does nothing.
  *
  *     2. cy.window().then(win => win.localStorage.removeItem(key)) —
- *        remove the app's task key. `removeItem`, not
- *        `cy.clearLocalStorage(key)`: `clearLocalStorage` clears the
- *        *value* of the key but leaves the key present. A test that
- *        asserts "the app has never run" (the key is absent) needs
- *        the key removed; a test that asserts "the app starts with
- *        an empty store" is satisfied by the app treating a missing
- *        key as an empty list. The absent key is the unambiguous
- *        "nothing has happened yet" state; the empty value is the
- *        "something happened, and it produced nothing" state. The
- *        reset produces the first.
+ *        remove the app's task key entirely.
+ *
+ *   `removeItem`, not `cy.clearLocalStorage(key)`. The two are not
+ *   the same: `cy.clearLocalStorage(key)` sets the key to an empty
+ *   string, which the app reads as a corrupted entry and recovers
+ *   from as an empty store. `removeItem` removes the key entirely,
+ *   which the app reads as "nothing has ever run" — the
+ *   unambiguous "fresh install" state. Both produce an empty store,
+ *   but only `removeItem` produces the state a first-time user's
+ *   browser is in. A test that asserts "the app has never run"
+ *   needs the key absent; a test that asserts "the app starts empty"
+ *   is satisfied by either, but the fresh-install state is the
+ *   stronger default and the one the reset should produce.
+ *
+ * How the reset interacts with the seed commands:
+ *
+ *   `cy.seedTasks` and `cy.seedCorruptStorage` call
+ *   `cy.visit('/', { onBeforeLoad })` internally. That visit runs
+ *   `onBeforeLoad` (which writes the seed), then loads the app,
+ *   which reads the seed. The visit supersedes the `beforeEach`'s
+ *   `removeItem` — the seed is what the test starts from, not the
+ *   empty store. This layering is correct: the `beforeEach` sets
+ *   the DEFAULT state; a seed command, called from a spec, sets the
+ *   SPECIFIC state that spec needs. The seed wins because it is
+ *   later; the reset establishes "no residue from the previous
+ *   test," and the seed establishes "the state this test wants."
+ *
+ *   The alternative — moving the reset out of `beforeEach` and
+ *   requiring every spec to call it explicitly — was rejected. The
+ *   default (empty store) is the state almost every spec wants, and
+ *   making it explicit in every spec would be a line every spec
+ *   forgets. A spec that wants a different starting state calls the
+ *   seed command; a spec that wants the default gets it for free.
+ *   That is the right split.
  *
  * The storage key comes from `Cypress.env('STORAGE_KEY')`, which
  * `cypress.config.js` mirrors from `src/js/utils/storage.js`. A spec
@@ -64,10 +92,10 @@ beforeEach(() => {
   cy.visit('/');
 
   // 2. Remove the app's task key. `removeItem` is the correct call,
-  //    not `cy.clearLocalStorage(key)`. The latter leaves the key
-  //    present with an empty value; the former removes the key
-  //    entirely. The difference matters for a test that asserts
-  //    "the app has never run" — that test needs the absent key.
+  //    not `cy.clearLocalStorage(key)`. See the file header for the
+  //    full reasoning; the short version is that `removeItem` yields
+  //    the fresh-install state (key absent), which is the state a
+  //    first-time user's browser is in.
   cy.window().then((win) => {
     win.localStorage.removeItem(Cypress.env('STORAGE_KEY'));
   });
@@ -92,5 +120,14 @@ beforeEach(() => {
  * expression below inverts the "is this the tolerated host?" check:
  * the Unsplash image is the one exception that is expected, so it
  * yields `false`; everything else yields `true`.
+ *
+ * A note on the narrowness of this exception:
+ *   The check is on the host in the error message, not on "any
+ *   error that mentions an image" or "any network error." A future
+ *   external dependency (an analytics beacon, a font) would need
+ *   its own reasoning, and the exception should not be widened
+ *   preemptively. The narrow version is the one that catches a real
+ *   defect in the app while tolerating the one external failure
+ *   the tests cannot prevent.
  */
 Cypress.on('uncaught:exception', (err) => !err.message.includes('images.unsplash.com'));
