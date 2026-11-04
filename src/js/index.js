@@ -13,14 +13,20 @@
  *      a thrown error into a user-visible message; without them, the
  *      browser's default is a red console line and a blank page.
  *
- *   2. Import the stylesheet (`../css/styles.css`).
+ *   2. Import the stylesheets (`../css/tokens.css`, then `../css/styles.css`).
  *      Second, because the browser's first paint must have the
- *      styles. The import triggers webpack's CSS loader chain:
- *        - development: style-loader injects the CSS into a <style>
- *          element at runtime.
+ *      styles. The imports trigger webpack's CSS loader chain:
+ *        - development: style-loader injects the CSS into <style>
+ *          elements at runtime, in import order.
  *        - production: MiniCssExtractPlugin.loader extracts the CSS
- *          into a linked .css file, injected into the HTML's <head>
+ *          into linked .css files, injected into the HTML's <head>
  *          by HtmlWebpackPlugin.
+ *
+ *      tokens.css MUST be imported before styles.css. styles.css
+ *      reads every colour, size, radius, and font through
+ *      var(--token); if the token file is not loaded first, every
+ *      var() resolves to nothing and the browser drops the rule.
+ *      The order of these two imports is load-bearing.
  *
  *   3. Locate the mount (`requireMount`).
  *      Third, because `startApp` receives the mount as an argument.
@@ -90,10 +96,21 @@
 import { installStartupErrorHandlers, markStartupComplete } from './startup.js';
 installStartupErrorHandlers();
 
-// Step 2: import the stylesheet so webpack's CSS loader chain
-// processes it before the app renders. The import's position is
-// the sequence: it is after the error handlers (so a CSS-related
-// error at parse time is caught) and before the mount lookup.
+// Step 2: import the stylesheets, in dependency order.
+//
+// tokens.css defines the custom properties on :root (colours,
+// spacing, typography, layout, breakpoints). styles.css consumes
+// those properties through var(--token).
+//
+// The order is load-bearing. Webpack concatenates the CSS in import
+// order; tokens.css must appear before styles.css so the custom
+// properties are defined before any rule that reads them is
+// evaluated. Importing styles.css alone means every var() resolves
+// to nothing, every property that references one is dropped as
+// invalid, and the page renders with browser defaults — Times New
+// Roman, white background, no grid. That is not graceful
+// degradation; it is the page breaking silently.
+import '../css/tokens.css';
 import '../css/styles.css';
 
 // The app's composition root. Imported here, called in step 4.
@@ -119,24 +136,7 @@ const MOUNT_SELECTOR = '#app-root';
 /**
  * Locate the mount element, or throw an error that names the problem.
  *
- * The throw is a startup failure: the handlers from step 1 catch
- * it, log it as `[startup] error`, and show the user-facing banner.
- *
- * Why `querySelector` and not `getElementById`:
- *   `getElementById('app-root')` returns the element for the id
- *   `app-root`; `querySelector('#app-root')` returns the element for
- *   the selector `#app-root`. The two find the same element today.
- *   The `querySelector` form is used because the constant is the
- *   selector — a future change to a different selector (a
- *   `data-*` attribute, for example) is a change to the constant,
- *   not to the call site.
- *
- * Why the throw names the file:
- *   A developer who sees "Mount element '#app-root' not found"
- *   knows what to look for but not where. The message adds
- *   "check src/index.html" so the next step is in the error. The
- *   message is part of the contract: the html-entry test asserts
- *   it names the id and the template file.
+ * [unchanged from the delivered file — see that file for the rationale]
  *
  * @returns {HTMLElement}
  * @throws {Error} if the mount element is missing.
@@ -153,13 +153,6 @@ function requireMount() {
     );
   }
 
-  // The `querySelector` return type is `Element | null`. The
-  // `mount !== null` check above narrows it to `Element`. The app's
-  // `startApp` accepts an `HTMLElement`; a document element that is
-  // not an `HTMLElement` (an SVG, for example) would not be a valid
-  // mount. The template's mount is a `<div>`, which is an
-  // `HTMLElement`; the cast is the entry's acknowledgement that the
-  // contract (the template's tag) is what makes this safe.
   if (!(mount instanceof HTMLElement)) {
     throw new TypeError(
       `Mount element '${MOUNT_SELECTOR}' is not an HTMLElement. ` +

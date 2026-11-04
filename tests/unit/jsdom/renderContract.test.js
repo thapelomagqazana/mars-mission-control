@@ -17,6 +17,31 @@
  *   test environment can be configured for a DOM without affecting the
  *   other files.
  *
+ * The region list is derived from `DASHBOARD_REGIONS`, not hard-coded.
+ *   The dashboard's `DASHBOARD_REGIONS` export is the source of truth
+ *   for "which regions exist." A future region addition, rename, or
+ *   removal is a change to that array; the tests that iterate over
+ *   regions read it and follow automatically. A hard-coded list in the
+ *   test would be a second source of truth — and a second source of
+ *   truth is the thing this project spends effort avoiding.
+ *
+ * The counter lives inside a slot, and the counter *is* the region.
+ *   See the tests in `describe('renderCounter')` and the counter tests
+ *   in `describe('renderDashboardFilled')` for the contract: the slot
+ *   (`.sidebar-counter`) is a plain well with no identity attributes;
+ *   the counter element (`<span class="task-counter" id="dashboard-counter"
+ *   data-region="counter" data-cy="dashboard-counter">`) carries the
+ *   identity. A `querySelector('[data-region="counter"]')` on the
+ *   filled dashboard returns the counter element, not the slot.
+ *
+ * The task area is a container, and the list and empty state are its content.
+ *   `renderTaskList` returns the container (a `<div class="task-area-container">`)
+ *   with either a `<ul>` or the empty state *inside* it. The container
+ *   carries the region (`data-region="list"`), the id, and the data-cy;
+ *   the `<ul>` carries `data-region="task-list"`; the empty state carries
+ *   `data-region="empty"`. The container is the render target Phase 6
+ *   populates — not a placeholder the empty state will be replaced by.
+ *
  * Environment:
  *   Runs in `jsdom`. The Jest config in `package.json` declares two
  *   projects — `node` for the data-layer tests, `jsdom` for this file.
@@ -31,11 +56,29 @@
 
 import { describe, it, expect, beforeEach } from '@jest/globals';
 
-import { renderDashboard, renderDashboardFilled } from '../../../src/js/views/dashboard.js';
+import {
+  renderDashboard,
+  renderDashboardFilled,
+  DASHBOARD_REGIONS,
+} from '../../../src/js/views/dashboard.js';
 import { renderTaskCard } from '../../../src/js/views/taskCard.js';
-import { renderTaskList } from '../../../src/js/views/taskList.js';
-import { renderEmptyState } from '../../../src/js/views/emptyState.js';
-import { renderCounter } from '../../../src/js/views/counter.js';
+import {
+  renderTaskList,
+  TASK_AREA_ID,
+  TASK_AREA_DATA_CY,
+  TASK_AREA_REGION,
+} from '../../../src/js/views/taskList.js';
+import {
+  renderEmptyState,
+  EMPTY_STATE_CREATE_ID,
+  EMPTY_STATE_CREATE_DATA_CY,
+} from '../../../src/js/views/emptyState.js';
+import {
+  renderCounter,
+  COUNTER_REGION,
+  COUNTER_ID,
+  COUNTER_DATA_CY,
+} from '../../../src/js/views/counter.js';
 import { renderSearchResults } from '../../../src/js/views/search.js';
 import { createTaskDialog } from '../../../src/js/views/dialog.js';
 import { el } from '../../../src/js/utils/dom.js';
@@ -62,11 +105,40 @@ function validTask(overrides = {}) {
 
 /**
  * A stub list renderer, for tests that compose the search view but do
- * not want to depend on `taskList.js`'s output.
+ * not want to depend on `taskList.js`'s output shape.
+ *
+ * The stub returns a bare `<ul>` — it does not emulate the container
+ * the real `renderTaskList` returns. Tests that use it target the
+ * search view's *own* output (the summary line, the composed list); a
+ * test that needed the full container shape would call the real
+ * `renderTaskList`.
  */
 function stubTaskList(tasks) {
   return el('ul', { class: 'task-list' },
     tasks.map((task) => el('li', {}, task.title))
+  );
+}
+
+/**
+ * Convenience: render the filled dashboard with the current counter
+ * element and a stub list. Used by tests that need to inspect the
+ * fully-populated dashboard DOM.
+ *
+ * The stub is used for the *list* because the tests that call
+ * `filledDashboard` are exercising the dashboard's placement of the
+ * list slot, not the list's own output shape. Tests for the list's
+ * shape live in the `renderTaskList` block below and use the real
+ * `renderTaskList`.
+ */
+function filledDashboard(counter = 0, tasks = []) {
+  return renderDashboardFilled(
+    { tasks, filteredTasks: tasks, searchQuery: '', counter },
+    {
+      renderCounter,
+      renderTaskList: stubTaskList,
+      renderSearchResults: (q, ts) =>
+        renderSearchResults({ query: q, tasks: ts, renderTaskList: stubTaskList }),
+    }
   );
 }
 
@@ -93,6 +165,10 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------
 // Card 1 — renderDashboard
+//
+// The shell render creates the layout regions and leaves the counter
+// slot and the list slot empty. Child views fill them (see the
+// renderDashboardFilled tests below).
 // ---------------------------------------------------------------------------
 
 describe('renderDashboard', () => {
@@ -103,17 +179,46 @@ describe('renderDashboard', () => {
     expect(node.dataset.region).toBe('dashboard');
   });
 
-  it('creates the four layout regions', () => {
+  it('creates the shell regions that the dashboard owns', () => {
     const node = renderDashboard({ tasks: [], filteredTasks: [], searchQuery: '', counter: 0 });
-    for (const region of ['header', 'sidebar', 'counter', 'main', 'search', 'content', 'search-results']) {
-      expect(node.querySelector(`[data-region="${region}"]`)).not.toBeNull();
+
+    // The shell owns the header, sidebar, and search regions. The
+    // counter region is on the counter element (rendered by
+    // renderCounter inside the slot); the list region is on the
+    // task-area container (rendered by renderTaskList inside its
+    // slot). Neither region exists on the shell.
+    const shellOwnedRegions = ['header', 'sidebar', 'search'];
+
+    for (const region of shellOwnedRegions) {
+      const matches = node.querySelectorAll(`[data-region="${region}"]`);
+      expect(matches.length).toBe(1);
     }
   });
 
-  it('leaves the counter and search-results containers empty (children fill them)', () => {
+  it('leaves the counter slot and the list slot empty (child views fill them)', () => {
     const node = renderDashboard({ tasks: [], filteredTasks: [], searchQuery: '', counter: 0 });
-    expect(node.querySelector('[data-region="counter"]').children.length).toBe(0);
-    expect(node.querySelector('[data-region="search-results"]').children.length).toBe(0);
+
+    // The counter slot is the well — a plain <section class="sidebar-counter">
+    // with no identity attributes. The counter element (span.task-counter,
+    // with data-region="counter") is placed by renderCounter. The shell
+    // leaves the well empty.
+    const counterSlot = node.querySelector('.sidebar-counter');
+    expect(counterSlot).not.toBeNull();
+    expect(counterSlot.dataset.region).toBeUndefined();
+    expect(counterSlot.id).toBe('');
+    expect(counterSlot.getAttribute('data-cy')).toBeNull();
+    expect(counterSlot.children.length).toBe(0);
+
+    // The list slot is the well — a plain <div class="dashboard__list-slot">
+    // with no identity attributes. The task-area container (with
+    // data-region="list") is placed by renderTaskList (via
+    // renderSearchResults). The shell leaves the well empty.
+    const listSlot = node.querySelector('.dashboard__list-slot');
+    expect(listSlot).not.toBeNull();
+    expect(listSlot.dataset.region).toBeUndefined();
+    expect(listSlot.id).toBe('');
+    expect(listSlot.getAttribute('data-cy')).toBeNull();
+    expect(listSlot.children.length).toBe(0);
   });
 
   it('includes the search input with an accessible name', () => {
@@ -141,34 +246,67 @@ describe('renderDashboard', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// renderDashboardFilled
+//
+// The filled render places each child view's output inside its slot.
+// ---------------------------------------------------------------------------
+
 describe('renderDashboardFilled', () => {
-  it('places the counter in the counter region', () => {
-    const node = renderDashboardFilled(
-      { tasks: [], filteredTasks: [], searchQuery: '', counter: 5 },
-      {
-        renderCounter,
-        renderTaskList: stubTaskList,
-        renderSearchResults: (q, ts) => renderSearchResults({ query: q, tasks: ts, renderTaskList: stubTaskList }),
-      }
-    );
-    // The counter is inside the dashboard's [data-region="counter"]
-    // container; the counter element itself is span.task-counter.
-    const counterRegion = node.querySelector('[data-region="counter"]');
-    expect(counterRegion).not.toBeNull();
-    expect(counterRegion.textContent).toBe('5 tasks');
-    expect(counterRegion.querySelector('span.task-counter')).not.toBeNull();
+  it('places the counter inside the slot, with the identity on the counter element', () => {
+    const node = filledDashboard(5);
+
+    // The slot is a plain well. No identity attributes.
+    const counterSlot = node.querySelector('.sidebar-counter');
+    expect(counterSlot).not.toBeNull();
+    expect(counterSlot.dataset.region).toBeUndefined();
+    expect(counterSlot.id).toBe('');
+    expect(counterSlot.getAttribute('data-cy')).toBeNull();
+
+    // The counter element inside the slot carries the identity.
+    const counterElement = node.querySelector('[data-region="counter"]');
+    expect(counterElement).not.toBeNull();
+    expect(counterElement.tagName).toBe('SPAN');
+    expect(counterElement.className).toBe('task-counter');
+    expect(counterElement.id).toBe(COUNTER_ID);
+    expect(counterElement.getAttribute('data-cy')).toBe(COUNTER_DATA_CY);
+    expect(counterElement.textContent).toBe('5 tasks');
+    expect(counterElement.getAttribute('data-count')).toBe('5');
+
+    // And the counter is a child of the slot.
+    expect(counterSlot.contains(counterElement)).toBe(true);
   });
 
-  it('places search results in the search-results region', () => {
+  it('places the list output inside the list slot', () => {
+    // Use the *real* renderTaskList so the test can assert the full
+    // shape: the container is inside the slot, the slot has no
+    // identity, and the container has the contracted identity.
     const node = renderDashboardFilled(
-      { tasks: [], filteredTasks: [], searchQuery: '', counter: 5 },
+      { tasks: [], filteredTasks: [], searchQuery: '', counter: 0 },
       {
         renderCounter,
-        renderTaskList: stubTaskList,
-        renderSearchResults: (q, ts) => renderSearchResults({ query: q, tasks: ts, renderTaskList: stubTaskList }),
+        renderTaskList,
+        renderSearchResults: (q, ts) =>
+          renderSearchResults({ query: q, tasks: ts, renderTaskList }),
       }
     );
-    expect(node.querySelector('[data-region="search-results"]').textContent).toContain('Showing all 0 tasks');
+
+    // The slot is a plain well.
+    const listSlot = node.querySelector('.dashboard__list-slot');
+    expect(listSlot).not.toBeNull();
+    expect(listSlot.dataset.region).toBeUndefined();
+    expect(listSlot.id).toBe('');
+
+    // The container is inside the slot and carries the identity.
+    const container = node.querySelector(`[data-region="${TASK_AREA_REGION}"]`);
+    expect(container).not.toBeNull();
+    expect(container.className).toBe('task-area-container');
+    expect(container.id).toBe(TASK_AREA_ID);
+    expect(container.getAttribute('data-cy')).toBe(TASK_AREA_DATA_CY);
+    expect(listSlot.contains(container)).toBe(true);
+
+    // The container's content is the empty state (no tasks were passed).
+    expect(container.querySelector('.empty-state')).not.toBeNull();
   });
 
   it('preserves the search input across filling', () => {
@@ -177,7 +315,8 @@ describe('renderDashboardFilled', () => {
       {
         renderCounter,
         renderTaskList: stubTaskList,
-        renderSearchResults: (q, ts) => renderSearchResults({ query: q, tasks: ts, renderTaskList: stubTaskList }),
+        renderSearchResults: (q, ts) =>
+          renderSearchResults({ query: q, tasks: ts, renderTaskList: stubTaskList }),
       }
     );
     const input = node.querySelector('[data-action="search-input"]');
@@ -188,14 +327,30 @@ describe('renderDashboardFilled', () => {
 
 // ---------------------------------------------------------------------------
 // Card 2 — renderTaskList
+//
+// The list returns the *task-area container*, whose content is either
+// a <ul> of tasks or the empty state. The container is the render
+// target — not a placeholder the empty state will be replaced by.
 // ---------------------------------------------------------------------------
 
 describe('renderTaskList', () => {
-  it('returns a <ul> for a non-empty array', () => {
+  it('returns the task-area container (not the <ul> directly)', () => {
     const node = renderTaskList([validTask()]);
-    expect(node.tagName).toBe('UL');
-    expect(node.className).toBe('task-list');
-    expect(node.dataset.region).toBe('task-list');
+    // The container is a <div>, not a <ul>. The container carries the
+    // task-area identity; the <ul> inside it carries the task-list
+    // region.
+    expect(node.tagName).toBe('DIV');
+    expect(node.className).toBe('task-area-container');
+    expect(node.id).toBe(TASK_AREA_ID);
+    expect(node.getAttribute('data-cy')).toBe(TASK_AREA_DATA_CY);
+    expect(node.dataset.region).toBe(TASK_AREA_REGION);
+  });
+
+  it('wraps a <ul> of tasks when the array is non-empty', () => {
+    const node = renderTaskList([validTask()]);
+    const ul = node.querySelector('ul.task-list');
+    expect(ul).not.toBeNull();
+    expect(ul.dataset.region).toBe('task-list');
   });
 
   it('wraps each task in an <li>', () => {
@@ -211,16 +366,26 @@ describe('renderTaskList', () => {
     expect(li.dataset.taskId).toBe(task.id);
   });
 
-  it('returns the empty state for an empty array (default reason)', () => {
+  it('wraps the empty state when the array is empty (default reason)', () => {
     const node = renderTaskList([]);
-    expect(node.dataset.region).toBe('empty');
-    expect(node.dataset.reason).toBe('no-tasks');
+    // The container is still the task-area container (same id, same
+    // region). Its content is the empty state, which carries its own
+    // region.
+    expect(node.className).toBe('task-area-container');
+    expect(node.dataset.region).toBe(TASK_AREA_REGION);
+
+    const emptyState = node.querySelector('.empty-state');
+    expect(emptyState).not.toBeNull();
+    expect(emptyState.dataset.region).toBe('empty');
+    expect(emptyState.dataset.reason).toBe('no-tasks');
   });
 
   it('honours the explicit emptyReason option', () => {
     const node = renderTaskList([], { emptyReason: 'no-results' });
-    expect(node.dataset.reason).toBe('no-results');
-    expect(node.textContent).toContain('No matching tasks');
+    const emptyState = node.querySelector('.empty-state');
+    expect(emptyState).not.toBeNull();
+    expect(emptyState.dataset.reason).toBe('no-results');
+    expect(emptyState.textContent).toContain('No matching tasks');
   });
 
   it('delegates to renderTaskCard for each card', () => {
@@ -242,6 +407,14 @@ describe('renderEmptyState', () => {
     expect(node.dataset.reason).toBe('no-tasks');
     expect(node.textContent).toContain('No tasks yet');
     expect(node.querySelector('[data-action="open-create-dialog"]')).not.toBeNull();
+  });
+
+  it('no-tasks: the create affordance carries the contracted id and data-cy', () => {
+    const node = renderEmptyState('no-tasks');
+    const button = node.querySelector('[data-action="open-create-dialog"]');
+    expect(button.tagName).toBe('BUTTON');
+    expect(button.id).toBe(EMPTY_STATE_CREATE_ID);
+    expect(button.getAttribute('data-cy')).toBe(EMPTY_STATE_CREATE_DATA_CY);
   });
 
   it('no-results: has the correct region, reason, and message', () => {
@@ -332,28 +505,35 @@ describe('renderTaskCard', () => {
 // ---------------------------------------------------------------------------
 // Card 5 — renderCounter
 //
-// The counter element does not carry a `data-region` attribute. The
-// dashboard owns the container ([data-region="counter"]); the counter
-// view fills it. Putting a region on both would give two views the same
-// region, which the ownership map forbids.
+// The counter element IS the region. It carries the region name, the
+// id, the data-cy, and the data-count. The slot the dashboard wraps
+// around it is a plain well (no identity attributes).
 // ---------------------------------------------------------------------------
 
 describe('renderCounter', () => {
-  it('returns a <span> with the task-counter class', () => {
+  it('returns a <span> with the task-counter class and the count', () => {
     const node = renderCounter(3);
     expect(node.tagName).toBe('SPAN');
     expect(node.className).toBe('task-counter');
     expect(node.dataset.count).toBe('3');
   });
 
-  it('does not claim a data-region (the container is the dashboard\'s)', () => {
+  it('claims the counter region, id, and data-cy', () => {
     const node = renderCounter(3);
-    expect(node.dataset.region).toBeUndefined();
+    expect(node.dataset.region).toBe(COUNTER_REGION);
+    expect(node.id).toBe(COUNTER_ID);
+    expect(node.getAttribute('data-cy')).toBe(COUNTER_DATA_CY);
   });
 
-  it('renders the count as text', () => {
+  it('renders "0 tasks" for the empty state (the empty-state value)', () => {
+    const node = renderCounter(0);
+    expect(node.textContent).toBe('0 tasks');
+    expect(node.getAttribute('data-count')).toBe('0');
+  });
+
+  it('renders "N tasks" for N > 1', () => {
     expect(renderCounter(3).textContent).toBe('3 tasks');
-    expect(renderCounter(0).textContent).toBe('0 tasks');
+    expect(renderCounter(5).textContent).toBe('5 tasks');
   });
 
   it('uses the singular form for 1', () => {
@@ -365,6 +545,12 @@ describe('renderCounter', () => {
     expect(node.getAttribute('role')).toBe('status');
     expect(node.getAttribute('aria-live')).toBe('polite');
     expect(node.getAttribute('aria-atomic')).toBe('true');
+  });
+
+  it('exposes the numeric count machine-readably', () => {
+    expect(renderCounter(0).getAttribute('data-count')).toBe('0');
+    expect(renderCounter(1).getAttribute('data-count')).toBe('1');
+    expect(renderCounter(42).getAttribute('data-count')).toBe('42');
   });
 });
 
@@ -566,12 +752,6 @@ describe('createTaskDialog — edit mode', () => {
 
 // ---------------------------------------------------------------------------
 // Security: no user string becomes markup
-//
-// This is the single most important group in this file. Every view that
-// renders a user-supplied string (title, description, creator, assignee)
-// must render it as text. If a future change replaces `createTextNode`
-// with `innerHTML` — or adds a view that reaches for `innerHTML` — these
-// tests will fail before the change reaches a browser.
 // ---------------------------------------------------------------------------
 
 describe('XSS guard — user strings are rendered as text', () => {
@@ -623,37 +803,57 @@ describe('XSS guard — user strings are rendered as text', () => {
 
 // ---------------------------------------------------------------------------
 // DOM ownership map — no two views own the same container
-//
-// The contract promises that each rendered container has exactly one
-// owner. This test renders every view into a scratch document and
-// asserts the region attributes are unique where they must be, and that
-// no view outputs a container another view claims.
 // ---------------------------------------------------------------------------
 
 describe('DOM ownership', () => {
-  it('the dashboard produces exactly one of each region', () => {
+  it('the dashboard shell produces exactly one of each region it owns', () => {
     const node = renderDashboard({ tasks: [], filteredTasks: [], searchQuery: '', counter: 0 });
-    for (const region of ['header', 'sidebar', 'counter', 'main', 'search', 'content', 'search-results']) {
-      const matches = node.querySelectorAll(`[data-region="${region}"]`);
-      expect(matches.length).toBe(1);
+
+    // The shell owns header, sidebar, and search. The counter and list
+    // regions live on the child views' elements (inside their slots).
+    const shellOwnedRegions = ['header', 'sidebar', 'search'];
+
+    for (const region of shellOwnedRegions) {
+      expect(node.querySelectorAll(`[data-region="${region}"]`).length).toBe(1);
     }
   });
 
-  it('the empty state and the task list are mutually exclusive', () => {
-    // A list of tasks produces a <ul>; an empty list produces the empty
-    // state. Both are valid, but not at the same time — the list's
-    // owner (renderTaskList) chooses one or the other.
+  it('the filled dashboard produces exactly one of every region in the map', () => {
+    // Use the *real* renderTaskList so the list container's identity
+    // is present in the tree, matching the region map's "list" entry.
+    const node = renderDashboardFilled(
+      { tasks: [], filteredTasks: [], searchQuery: '', counter: 0 },
+      {
+        renderCounter,
+        renderTaskList,
+        renderSearchResults: (q, ts) =>
+          renderSearchResults({ query: q, tasks: ts, renderTaskList }),
+      }
+    );
+
+    for (const region of DASHBOARD_REGIONS.map((r) => r.name)) {
+      expect(node.querySelectorAll(`[data-region="${region}"]`).length).toBe(1);
+    }
+  });
+
+  it('the empty state and the task list are mutually exclusive as container content', () => {
+    // Both renders produce the *same* container (the task-area container).
+    // What differs is the container's content: a <ul> when there are tasks,
+    // the empty state when there are none.
     const nonEmpty = renderTaskList([validTask()]);
     const empty = renderTaskList([]);
 
-    expect(nonEmpty.tagName).toBe('UL');
-    expect(nonEmpty.dataset.region).toBe('task-list');
+    // Same container identity in both cases.
+    expect(nonEmpty.className).toBe('task-area-container');
+    expect(empty.className).toBe('task-area-container');
+    expect(nonEmpty.dataset.region).toBe(empty.dataset.region);
 
-    expect(empty.tagName).toBe('DIV');
-    expect(empty.dataset.region).toBe('empty');
-    expect(empty.dataset.reason).toBe('no-tasks');
+    // Different content.
+    expect(nonEmpty.querySelector('ul.task-list')).not.toBeNull();
+    expect(nonEmpty.querySelector('.empty-state')).toBeNull();
 
-    expect(nonEmpty.dataset.region).not.toBe(empty.dataset.region);
+    expect(empty.querySelector('ul.task-list')).toBeNull();
+    expect(empty.querySelector('.empty-state')).not.toBeNull();
   });
 
   it('every data-region value used across the views is unique to one view', () => {
@@ -681,15 +881,29 @@ describe('DOM ownership', () => {
     record('counter', renderCounter(1));
     record('searchResults', renderSearchResults({ query: '', tasks: [], renderTaskList: stubTaskList }));
 
-    // Every region has exactly one producing view.
+    // Every region has exactly one producing view — with two exceptions:
+    //
+    //   1. `empty` — produced by renderEmptyState under multiple entry
+    //      points, but all are the same *view*. The rule is "one view
+    //      per region," not "one call site per region."
+    //
+    //   2. `list` — the task-area container. It is produced by
+    //      renderTaskList (as the top-level return value) and also
+    //      appears in renderTaskList([]) (the empty-state render).
+    //      Both are the same *view*: renderTaskList. The region
+    //      belongs to renderTaskList.
     for (const [region, producers] of seen.entries()) {
-      // `empty` is produced by renderEmptyState under multiple entry
-      // points (list-empty, no-tasks, no-results) — but all three are
-      // the same *view*. The rule is "one view per region," not "one
-      // call site per region."
       if (region === 'empty') {
         expect(Array.from(producers)).toEqual(
           expect.arrayContaining(['emptyState-noTasks', 'emptyState-noResults'])
+        );
+        continue;
+      }
+      if (region === TASK_AREA_REGION) {
+        // Both entries are `taskList` calls — the empty render and the
+        // populated render both produce the container. Same view.
+        expect(Array.from(producers)).toEqual(
+          expect.arrayContaining(['taskList', 'taskList-empty'])
         );
         continue;
       }
@@ -700,10 +914,6 @@ describe('DOM ownership', () => {
 
 // ---------------------------------------------------------------------------
 // UI checklist traceability — every checklist item is produced by a view
-//
-// The contract's traceability table promises that each Stage 1 checklist
-// item maps to exactly one view. This test asserts the mapping by
-// checking that each item's visible marker exists in a rendered tree.
 // ---------------------------------------------------------------------------
 
 describe('UI checklist traceability', () => {
@@ -714,20 +924,20 @@ describe('UI checklist traceability', () => {
     expect(header.classList.contains('dashboard__header')).toBe(true);
   });
 
-  it('the live task counter is rendered by renderCounter inside the counter region', () => {
-    // The counter element has no data-region of its own; it lives
-    // inside the dashboard's counter container.
-    const dashboard = renderDashboardFilled(
-      { tasks: [], filteredTasks: [], searchQuery: '', counter: 3 },
-      {
-        renderCounter,
-        renderTaskList: stubTaskList,
-        renderSearchResults: (q, ts) => renderSearchResults({ query: q, tasks: ts, renderTaskList: stubTaskList }),
-      }
-    );
+  it('the live task counter is rendered by renderCounter, and is itself the counter region', () => {
+    const dashboard = filledDashboard(3);
+
+    // The counter element IS the region. The slot is a plain well.
     const counterRegion = dashboard.querySelector('[data-region="counter"]');
     expect(counterRegion).not.toBeNull();
-    expect(counterRegion.querySelector('span.task-counter').textContent).toBe('3 tasks');
+    expect(counterRegion.tagName).toBe('SPAN');
+    expect(counterRegion.className).toBe('task-counter');
+    expect(counterRegion.textContent).toBe('3 tasks');
+    expect(counterRegion.id).toBe(COUNTER_ID);
+    expect(counterRegion.getAttribute('data-cy')).toBe(COUNTER_DATA_CY);
+
+    // And it is inside the slot.
+    expect(dashboard.querySelector('.sidebar-counter').contains(counterRegion)).toBe(true);
   });
 
   it('task cards render title, description, creator, assignee, edit, delete', () => {
@@ -740,9 +950,14 @@ describe('UI checklist traceability', () => {
     expect(node.querySelector('[data-action="delete-task"]')).not.toBeNull();
   });
 
-  it('the empty state renders for an empty list', () => {
-    const node = renderTaskList([]);
-    expect(node.dataset.region).toBe('empty');
+  it('the empty state renders inside the task-area container for an empty list', () => {
+    const container = renderTaskList([]);
+    // The container carries the task-area region.
+    expect(container.dataset.region).toBe(TASK_AREA_REGION);
+    // The empty state inside it carries the empty region.
+    const emptyState = container.querySelector('.empty-state');
+    expect(emptyState).not.toBeNull();
+    expect(emptyState.dataset.region).toBe('empty');
   });
 
   it('the search summary renders for a query', () => {

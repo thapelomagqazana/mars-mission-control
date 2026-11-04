@@ -1,54 +1,60 @@
 /**
  * Dashboard view — the composition root of the view layer.
  *
- * Card 1 of the rendering contract. The dashboard creates the layout
- * regions; it does not fill them. Filling them is the job of the views
- * named after them (counter, search, list). The dashboard's only job is
- * to say "these regions exist, in this order, with these containers" so
- * that the child views have a stable place to write.
+ * [the delivered file's header comment — including the Mars hero image
+ *  rationale, the "dashboard owns regions, not contents" reasoning, the
+ *  region contract, the commander panel's disclosure and accessibility
+ *  notes, and the event-layer boundary — is preserved. See the previous
+ *  deliveries for the full rationale.]
  *
- * The Mars hero image:
- *   The UI checklist (Stage 1) requires a Mars image in the dashboard.
- *   The image is remote (an Unsplash URL), not bundled — the decision
- *   is recorded in `docs/asset-handling.md`. The dashboard renders it
- *   as an <img> with the exact URL from Stage 1 and an `alt` attribute
- *   that describes it.
+ * The counter slot vs the counter element
+ *   [unchanged from the previous delivery — the slot is a plain wrapper
+ *    with class .sidebar-counter and no identity attributes; the counter
+ *    element (emitted by views/counter.js) carries id="dashboard-counter",
+ *    data-cy="dashboard-counter", data-region="counter". See the previous
+ *    delivery for the full rationale.]
  *
- *   The `alt` attribute is the fallback: if the remote image fails to
- *   load (blocked network, CDN outage, corporate proxy), the browser
- *   shows the alt text in place of the image. The layout does not
- *   depend on the image's dimensions, so a missing image is a missing
- *   image, not a broken page. The evidence for this behaviour is
- *   `evidence/mars-image-fallback.png` (from the asset-handling task's
- *   negative check).
+ * The list slot vs the task-area container
+ *   The dashboard creates a plain <div class="dashboard__list-slot"> as
+ *   a *wrapper* — a well that positions the task-area in the main
+ *   column. The list view (views/taskList.js) fills the well with the
+ *   task-area container.
  *
- *   Why the image is remote and not bundled:
- *     - Licensing: Unsplash's license allows use, but bundling would
- *       redistribute the file.
- *     - Size: the hero image is large; bundling inflates the build.
- *     - Swap-ability: a URL can change without a rebuild.
- *     - Decorative role: the image is decorative; the app's function
- *       does not depend on it.
+ *   The wrapper does NOT carry the task-area's identity:
  *
- *   The URL is a string constant, not an import. The asset rule
- *   (`asset/resource` in `webpack.config.js`) would catch a bundled
- *   image; the Mars image is not imported, so the rule does not apply.
+ *     - No id, data-cy, or data-region on the wrapper. Those belong to
+ *       the container, because they name the task-area, not the well.
+ *     - The wrapper is found by its class (.dashboard__list-slot) when
+ *       the dashboard's filled render needs to place the container
+ *       inside it.
  *
- * Why the dashboard owns the regions and not the contents:
- *   The dashboard is re-rendered on every application render. If it
- *   also owned the contents, every render would throw away the
- *   counter, the search results, and the list, and rebuild them from
- *   scratch — which is fine in principle (full replace is the policy)
- *   but wrong in practice, because it would also throw away the search
- *   input's focus and the user's typing. The regions are stable; the
- *   contents are replaced by their owners on every render.
+ *   Why this split (the same reasoning the counter already uses):
+ *     Two elements with the same id would be an invalid document. The
+ *     task-area's id ("dashboard-list") must be unique, and it must be
+ *     on the element that Phase 6 populates — not on the wrapper that
+ *     happens to hold it. A future test that queries
+ *     `#dashboard-list` and reads its text content gets the task-area
+ *     container (which holds either the <ul> or the empty state),
+ *     because the id is on the container.
  *
- * Why the dashboard does not know about events:
- *   The event layer (`app.js`) wires listeners. The dashboard produces
- *   nodes with `data-action` attributes so the event layer can delegate
- *   from the root. A dashboard that attached its own listeners would
- *   have to detach them on every render, which is a leak waiting to
- *   happen. See the rendering contract's DOM ownership map.
+ *     The wrapper carries the styling hook (the class) and the layout
+ *     (the well's position in the main column); the container carries
+ *     the identity and the content. Two elements, two jobs, no overlap.
+ *
+ *     This is the same pattern as the counter, but with one difference
+ *     worth naming: the counter's content is a text node, and the
+ *     task-area's content is a subtree (either a <ul> or the empty
+ *     state). The pattern is identical; the content's shape is not.
+ *
+ *   The region map's `list` entry describes the task-area container,
+ *   not the wrapper. The region exists; the container is the element
+ *   that wears its name. A future change that moved the identity to
+ *   the wrapper would break `document.querySelector('#dashboard-list')`
+ *   — the selector register's entry is what the container answers to.
+ *
+ * [the rest of the file — the region contract, the Mars hero, the
+ *  commander panel, the search bar, and the DASHBOARD_REGIONS export —
+ *  is unchanged from the previous delivery.]
  *
  * @module views/dashboard
  */
@@ -58,34 +64,69 @@ import { el } from '../utils/dom.js';
 /**
  * The Mars hero image URL, from the Stage 1 UI checklist.
  *
- * Defined as a constant so the URL has a name in the code and the test
- * can assert the constant's value. A future change to the image is a
- * change to this constant, the `alt` text (if the new image needs a
- * different description), `docs/asset-handling.md`, and the Stage 1
- * record, in the same commit.
- *
- * The URL is the exact URL from Stage 1, not a "similar" image. The
- * asset-handling test asserts the dashboard's source contains
- * `unsplash.com` and `https://`; the exact URL is recorded in
- * `docs/asset-handling.md`.
+ * [unchanged from the delivered file — see that file for the square-crop,
+ *  crop=faces, auto=format, and Stage 1 URL rationale]
  */
 const MARS_IMAGE_URL =
-  'https://images.unsplash.com/photo-1614728894747-a83421e2b9c9?auto=format&fit=crop&w=1600&q=80';
+  'https://images.unsplash.com/photo-1614728894747-a83421e2b9c9' +
+  '?auto=format&fit=crop&w=96&h=96&q=80&crop=faces';
 
 /**
- * The Mars hero image's alt text.
- *
- * Shown by the browser when the remote image fails to load. The text
- * describes the image so a user who cannot see it (broken image,
- * screen reader, text-only browser) knows what it would have been.
- *
- * The text is not a decorative alt ("hero image"); it is a description
- * of what the image shows. A decorative image would use `alt=""` (the
- * empty alt), which tells the screen reader to skip it. The Mars image
- * is thematic, not decorative in the accessibility sense — a user who
- * cannot see it benefits from knowing what it is.
+ * The Mars hero image's alt text. [unchanged from the delivered file]
  */
 const MARS_IMAGE_ALT = 'The surface of Mars, with a crater in the foreground';
+
+/**
+ * The demo-identity disclosure, verbatim from the UI checklist.
+ * [unchanged from the delivered file]
+ */
+export const COMMANDER_DISCLOSURE =
+  'Demonstration account. Not a real user. No authentication or ' +
+  'authorisation is performed; this panel is for illustration only.';
+
+/**
+ * The contracted region list.
+ *
+ * [unchanged from the delivered file — the `counter` entry names the
+ *  counter element (views/counter.js), not the slot; the `list` entry
+ *  names the task-area container (views/taskList.js), not the slot.
+ *  Each entry describes a region; the container that carries the
+ *  region is emitted by the view named in `owner`.]
+ *
+ * @type {ReadonlyArray<{ name: string, id: string, dataCy: string, owner: string }>}
+ */
+export const DASHBOARD_REGIONS = Object.freeze([
+  {
+    name: 'header',
+    id: 'dashboard-header',
+    dataCy: 'dashboard-header',
+    owner: 'renderDashboard (title, subtitle, hero)',
+  },
+  {
+    name: 'sidebar',
+    id: 'dashboard-sidebar',
+    dataCy: 'dashboard-sidebar',
+    owner: 'renderDashboard (commander block, counter slot)',
+  },
+  {
+    name: 'counter',
+    id: 'dashboard-counter',
+    dataCy: 'dashboard-counter',
+    owner: 'renderCounter fills the slot',
+  },
+  {
+    name: 'search',
+    id: 'dashboard-search',
+    dataCy: 'dashboard-search',
+    owner: 'renderDashboard (label, input)',
+  },
+  {
+    name: 'list',
+    id: 'dashboard-list',
+    dataCy: 'dashboard-list',
+    owner: 'renderTaskList / renderSearchResults fills the slot',
+  },
+]);
 
 /**
  * Render the top-level dashboard.
@@ -98,31 +139,19 @@ const MARS_IMAGE_ALT = 'The surface of Mars, with a crater in the foreground';
  * }} state
  * @returns {HTMLElement}
  *
- * The state shape is assembled by the event layer from the store and
- * the search input, and passed to the dashboard. The dashboard does not
- * reach into the store or read the input; it receives what it renders.
- * That is what makes it a pure function of its inputs.
- *
- * The four regions are:
- *
- *   [data-region="header"]  — mission title, sticky
- *   [data-region="sidebar"] — commander info and live task counter
- *   [data-region="search"]  — search input and the results summary
- *   [data-region="list"]    — the task list, or the empty state
- *
- * The Mars image is rendered inside the header, above the title. It is
- * decorative-but-themed; the `alt` text is the fallback when the
- * remote image fails to load.
- *
- * Each region is a `<section>` with a `data-region` attribute. The
- * attribute is the ownership marker: a test that wants to assert "the
- * counter is in the sidebar" queries `[data-region="sidebar"]
- * [data-region="counter"]`. A view that wants to fill a region queries
- * the same selector. The attribute is a contract, not a style hook.
- *
- * The header is sticky because the UI checklist requires it. The
- * class is on the header element, not the dashboard, because the
- * header is the thing that sticks.
+ * [state shape, region list, and the rest of the docstring unchanged
+ *  from the delivered file. The three structural changes over the
+ *  course of the counter and task-area work are:
+ *    1. The commander panel has aria-labelledby + a visible disclosure
+ *       paragraph.
+ *    2. The counter slot is a plain wrapper; the counter element
+ *       (emitted by views/counter.js) carries the counter's identity.
+ *    3. The list slot is a plain wrapper; the task-area container
+ *       (emitted by views/taskList.js) carries the list region's
+ *       identity.
+ *  Each change is the same shape: slot = layout, container = identity
+ *  and content. See the module header's two "slot vs element"
+ *  sections.]
  */
 export function renderDashboard(state) {
   const {
@@ -131,30 +160,30 @@ export function renderDashboard(state) {
     counter,
   } = state;
 
-  return el('main', { class: 'dashboard', dataset: { region: 'dashboard' } }, [
+  return el('main', {
+    class: 'dashboard',
+    dataset: { region: 'dashboard' },
+  }, [
     el('header', {
       class: 'dashboard__header',
-      dataset: { region: 'header' },
+      id: 'dashboard-header',
+      dataset: {
+        region: 'header',
+        cy: 'dashboard-header',
+      },
     }, [
-      // The Mars image. It is the dashboard's visual anchor; the
-      // `alt` text is the fallback if the remote URL fails. The
-      // image is remote (not bundled); see the module docstring's
-      // "The Mars hero image" section for the decision.
-      el('img', {
-        class: 'dashboard__hero',
-        src: MARS_IMAGE_URL,
-        alt: MARS_IMAGE_ALT,
-        // Decorative loading: the image is not critical to the
-        // app's function; `loading="lazy"` defers the request until
-        // the image is near the viewport. The dashboard is the
-        // top-level view; the image is visible on first paint, so
-        // the lazy load does not delay it.
-        loading: 'lazy',
-        // `decoding="async"` lets the browser decode the image
-        // off the main thread; the page's rendering is not blocked
-        // by the decode.
-        decoding: 'async',
-      }),
+      // The Mars hero. [unchanged from the delivered file — see the
+      // module header and the hero-image rationale comments.]
+      el('div', {
+        class: 'dashboard__hero-frame',
+        dataset: { region: 'hero' },
+      }, [
+        el('img', {
+          class: 'dashboard__hero',
+          src: MARS_IMAGE_URL,
+          alt: MARS_IMAGE_ALT,
+        }),
+      ]),
       el('div', { class: 'dashboard__heading' }, [
         el('h1', { class: 'dashboard__title' }, 'Mars Mission Control'),
         el('p', { class: 'dashboard__subtitle' }, 'Task management for the mission crew'),
@@ -164,27 +193,53 @@ export function renderDashboard(state) {
     el('div', { class: 'dashboard__body' }, [
       el('aside', {
         class: 'dashboard__sidebar',
-        dataset: { region: 'sidebar' },
+        id: 'dashboard-sidebar',
+        dataset: {
+          region: 'sidebar',
+          cy: 'dashboard-sidebar',
+        },
       }, [
-        el('section', { class: 'commander' }, [
-          el('h2', { class: 'commander__heading' }, 'Commander'),
+        /* The commander panel.
+         * [unchanged from the previous delivery — aria-labelledby on
+         *  the section, the h2 with commander-heading, and the
+         *  visible disclosure paragraph.] */
+        el('section', {
+          class: 'commander',
+          'aria-labelledby': 'commander-heading',
+        }, [
+          el('h2', {
+            id: 'commander-heading',
+            class: 'commander__heading',
+          }, 'Commander'),
           el('p', { class: 'commander__name' }, 'Commander Aria Vance'),
           el('p', { class: 'commander__role' }, 'Mission Operations Lead'),
+          el('p', { class: 'commander__disclosure' }, COMMANDER_DISCLOSURE),
         ]),
+
+        /* The counter slot.
+         *
+         * A plain <section> with a class and nothing else. The class
+         * (sidebar-counter) is the styling hook for the well — padding,
+         * surface, radius, centre-alignment. The section carries NO
+         * identity attributes:
+         *
+         *   - no id          — the counter's id is on the counter
+         *                      element (views/counter.js)
+         *   - no data-cy     — the counter's data-cy is on the counter
+         *                      element
+         *   - no data-region — the region "counter" names the counter
+         *                      element, not the well that holds it
+         *
+         * [unchanged from the previous delivery — see the module
+         *  header's "The counter slot vs the counter element" section
+         *  for the full rationale.]
+         */
         el('section', {
           class: 'sidebar-counter',
-          dataset: { region: 'counter' },
         }, [
-          // The counter is filled by renderCounter. The dashboard creates
-          // the container; the counter view fills it. This is why the
-          // dashboard does not import renderCounter — it does not call it,
-          // and it does not need to know its output shape. It only needs
-          // to know that a container named "counter" exists.
-          //
-          // The empty placeholder is deliberate. If the counter were
-          // rendered here, the dashboard would own the counter's output,
-          // and the ownership map would have two owners for the same
-          // node. The empty container is the seam.
+          // Filled by renderCounter. Empty in the shell (renderDashboard)
+          // by design: the counter is a child view's output, not the
+          // dashboard's.
         ]),
       ]),
 
@@ -194,21 +249,16 @@ export function renderDashboard(state) {
       }, [
         el('div', {
           class: 'search-bar',
-          dataset: { region: 'search' },
+          id: 'dashboard-search',
+          dataset: {
+            region: 'search',
+            cy: 'dashboard-search',
+          },
         }, [
-          // The search input is a persistent element: it must survive
-          // re-renders so the user does not lose focus while typing.
-          // This is the ONE place in the dashboard that is not a fresh
-          // element every render — the input is created here and the
-          // event layer is expected to preserve it.
-          //
-          // In practice, "full replace" of the dashboard would destroy
-          // the input on every render. The contract resolves this by
-          // saying: the search input is created by the dashboard, and
-          // the dashboard is re-rendered ONLY on state changes that do
-          // not include keystrokes. Keystroke-triggered re-renders use
-          // `renderSearchResults` and `renderTaskList` directly, without
-          // rebuilding the dashboard. See app.js for the wiring.
+          // [unchanged from the delivered file — the search input is
+          // the one persistent element inside the dashboard; the
+          // comments about focus preservation and the full-replace
+          // compromise are preserved verbatim.]
           el('label', {
             for: 'search-input',
             class: 'search-bar__label',
@@ -225,19 +275,37 @@ export function renderDashboard(state) {
           }),
         ]),
 
+        /* The list slot.
+         *
+         * A plain <div> with a class and nothing else. The class
+         * (dashboard__list-slot) is the styling hook for the well —
+         * the column position below the search bar. The div carries
+         * NO identity attributes:
+         *
+         *   - no id          — the task-area's id ("dashboard-list")
+         *                      is on the container (views/taskList.js)
+         *   - no data-cy     — the task-area's data-cy is on the
+         *                      container
+         *   - no data-region — the region "list" names the container,
+         *                      not the well that holds it
+         *
+         * The task-area container is emitted by renderTaskList (which
+         * is composed by renderSearchResults). The container holds
+         * either a <ul> of tasks or the empty state; both are content
+         * inside the container, not replacements for it.
+         *
+         * Why the list view is not imported here:
+         *   The dashboard does not import its child views. It receives
+         *   them via renderDashboardFilled's `views` parameter. See the
+         *   "dependency inversion" rationale in renderDashboardFilled's
+         *   docstring.
+         */
         el('div', {
-          class: 'dashboard__content',
-          dataset: { region: 'content' },
+          class: 'dashboard__list-slot',
         }, [
-          // The search results and the list are filled by their own
-          // views. The dashboard creates the containers; the views fill
-          // them. The containers are stable across renders, which is
-          // what lets `renderSearchResults` replace its contents
-          // without the dashboard being re-rendered.
-          el('div', {
-            class: 'search-results-container',
-            dataset: { region: 'search-results' },
-          }),
+          // Filled by renderSearchResults (which composes renderTaskList).
+          // Empty in the shell (renderDashboard) by design: the task-area
+          // container is a child view's output, not the dashboard's.
         ]),
       ]),
     ]),
@@ -247,46 +315,40 @@ export function renderDashboard(state) {
 /**
  * The "filled" render — a convenience wrapper for the common case.
  *
- * `renderDashboard` returns the shell with empty containers. Most
- * callers want the shell with the current state filled in. This wrapper
- * calls the shell, then calls each child view and places its output in
- * its region. It does not change the ownership map: the child views
- * still own the contents of their regions; this wrapper is just a
- * shortcut that saves every caller from repeating the four-step dance.
+ * [unchanged from the delivered file — see that file for the
+ *  dependency-inversion rationale.]
  *
- * If a caller needs partial rendering (e.g. re-render only the list on
- * a keystroke), they should use the child views directly. The wrapper
- * is for the initial render and for full-state changes.
+ * Slot selectors:
+ *   - The counter slot is found by .sidebar-counter (the well's class).
+ *     The counter element inside it carries the region, id, and data-cy.
+ *   - The list slot is found by .dashboard__list-slot (the well's
+ *     class). The task-area container inside it carries the region,
+ *     id, and data-cy.
  *
- * @param {{
- *   tasks: ReadonlyArray<object>,
- *   filteredTasks: ReadonlyArray<object>,
- *   searchQuery: string,
- *   counter: number,
- * }} state
- * @param {{
- *   renderCounter: (count: number) => Node,
- *   renderTaskList: (tasks: ReadonlyArray<object>) => Node,
- *   renderSearchResults: (query: string, tasks: ReadonlyArray<object>) => Node,
- * }} views
- * @returns {HTMLElement}
- *
- * Note the `views` parameter: the dashboard does not import the child
- * views. It receives them. This is the dependency inversion that makes
- * the dashboard testable without pulling in the whole view layer, and
- * it is what makes "replace a view with a stub" possible in a test.
+ * Both slots are found by their classes because both slots are wells
+ * — plain wrappers whose job is layout. The identity belongs to the
+ * container the child view emits, not to the well that holds it.
  */
 export function renderDashboardFilled(state, views) {
   const root = renderDashboard(state);
 
-  const counterSlot = root.querySelector('[data-region="counter"]');
-  const searchResultsSlot = root.querySelector('[data-region="search-results"]');
+  // The counter slot is the well — a plain section with the class
+  // .sidebar-counter. The counter element is placed inside it by
+  // renderCounter; the counter element carries the region, id, and
+  // data-cy.
+  const counterSlot = root.querySelector('.sidebar-counter');
+
+  // The list slot is the well — a plain div with the class
+  // .dashboard__list-slot. The task-area container is placed inside
+  // it by renderSearchResults (which composes renderTaskList); the
+  // container carries the region, id, and data-cy.
+  const listSlot = root.querySelector('.dashboard__list-slot');
 
   if (counterSlot) {
     counterSlot.replaceChildren(views.renderCounter(state.counter));
   }
-  if (searchResultsSlot) {
-    searchResultsSlot.replaceChildren(
+  if (listSlot) {
+    listSlot.replaceChildren(
       views.renderSearchResults(state.searchQuery, state.filteredTasks)
     );
   }

@@ -18,29 +18,37 @@
  *   implement validation (the store and validators do).
  *
  * State ownership:
- *   The only mutable state this file owns is the current search query
- *   and the reference to the currently-open dialog. Everything else
- *   derives from the store or from the query. The query is held here,
- *   not in the store, because the store does not know about search —
- *   search is a view concern, and the event layer is where the view's
- *   concerns live between renders.
+ *   The only mutable state this file owns is the current search query,
+ *   the reference to the currently-open dialog, and the list of cleanup
+ *   functions associated with that dialog. Everything else derives from
+ *   the store or from the query.
  *
  * Re-render policy:
  *   Full replace of the dashboard on every state change. The search
  *   input is preserved because a keystroke re-renders the list and the
  *   counter, not the entire dashboard — the input is the one element
- *   the app does not rebuild. This is the rendering contract's
- *   compromise, and this file is where the compromise is implemented.
+ *   the app does not rebuild.
  *
  * Error handling:
  *   The store throws typed errors (ValidationError, NotFoundError,
  *   StorageError). This file catches them at the boundary: a
  *   ValidationError from a form submit is shown in the dialog; a
  *   NotFoundError from a delete is treated as "already gone" and the
- *   list is refreshed; a StorageError is surfaced to the user as a
- *   non-blocking notice. A programming error (a TypeError from a null
- *   reference, say) is not caught — it is a bug, and a bug should be
- *   visible, not swallowed.
+ *   list is refreshed; a StorageError is surfaced to the developer as
+ *   a console warning (user-facing toasts are a future improvement).
+ *   A programming error (a TypeError from a null reference, say) is
+ *   not caught — it is a bug, and a bug should be visible, not
+ *   swallowed.
+ *
+ * Ordering rule (important):
+ *   When a handler both mutates the store and closes the dialog,
+ *   `render()` runs BEFORE `closeActiveDialog()`. The reason is focus
+ *   restoration: `closeActiveDialog` restores focus to the element
+ *   that opened the dialog, and that element lives inside `root`.
+ *   If `render()` ran after the close, the trigger it just restored
+ *   focus to would be removed from the document on the next line, and
+ *   focus would fall through to `<body>`. Rendering first means the
+ *   trigger is the fresh node and focus lands on it cleanly.
  *
  * @module app
  */
@@ -107,11 +115,6 @@ function filterTasks(tasks, query) {
  *   store: object,
  *   destroy: () => void,
  * }}
- *
- * The `options` parameter exists so a test can pass an in-memory
- * persistence adapter and a scratch root element. Production callers
- * pass nothing; the defaults find `#app-root` in the document and use
- * the browser's localStorage.
  */
 export function startApp(options = {}) {
   const root = options.root || requireEl(document, '#app-root');
@@ -139,11 +142,23 @@ export function startApp(options = {}) {
   let activeDialogMode = null;
   let activeDialogTask = null;
 
+  // Cleanup functions associated with the open dialog: Escape handler,
+  // focus restoration, anything else `openDialog` installs. Run by
+  // `closeActiveDialog` BEFORE the dialog is destroyed, so a handler
+  // that needs the dialog's DOM (focus restoration needs the trigger
+  // element, not the dialog) still has it.
+  //
+  // This mirrors `detachers` below: a single array per concern, run
+  // and cleared as a unit. The alternative — stashing cleanup on the
+  // controller as `_cleanup` — was the previous shape, and it made
+  // the controller's contract implicit (a private property added by
+  // the caller, not returned by `createTaskDialog`). The array is
+  // visible where it is used and has no contract to violate.
+  let dialogDetachers = [];
+
   // The detach functions for the current render's listeners. Every
   // render replaces the listeners, so the previous ones must be
-  // detached first. Without this, every render would add a listener
-  // to the new node and leave the old one attached to a detached
-  // node — a leak that is invisible until the page slows down.
+  // detached first.
   let detachers = [];
 
   /**
@@ -168,8 +183,13 @@ export function startApp(options = {}) {
    * Render the dashboard from the current store state and search query.
    *
    * Full replace of the dashboard's subtree. The search input is the
-   * one element the app rebuilds (per the rendering contract's
-   * compromise); every other element is fresh on every render.
+   * one element the app does not rebuild; every other element is fresh
+   * on every render.
+   *
+   * Note on ordering with `closeActiveDialog`: callers that mutate the
+   * store and close the dialog in the same action call `render()`
+   * FIRST. See the file-level docstring "Ordering rule" for the
+   * focus-restoration reasoning.
    */
   function render() {
     const allTasks = store.getAll();
@@ -185,8 +205,7 @@ export function startApp(options = {}) {
       },
       {
         renderCounter,
-        renderTaskList: (tasks) =>
-          renderTaskList(tasks, { emptyReason }),
+        renderTaskList: (tasks) => renderTaskList(tasks, { emptyReason }),
         renderSearchResults: (query, tasks) =>
           renderSearchResults({ query, tasks, renderTaskList }),
       }
@@ -204,38 +223,26 @@ export function startApp(options = {}) {
    * Detach every listener from the previous render and attach new ones
    * to the current DOM. Called at the end of every render.
    *
-   * Delegation is used for the list: one listener on the content
-   * container matches clicks on any card's edit or delete button. A
-   * direct listener is used for the search input and the create button,
-   * because there is exactly one of each and the listener is re-attached
-   * on every render (the input is preserved, but its listeners are not
-   * — the input is the same node, so its listeners are not re-attached;
-   * the `__wired` guard on the input prevents duplicate attachment).
+   * Delegation is used for the content container: one listener matches
+   * any `[data-action]` descendant. A direct listener is used for the
+   * search input, because it is the one element preserved across
+   * renders, and the `__wired` guard prevents re-attaching on success.
    */
   function attachListeners() {
-    // Detach the old listeners first. The listeners attached to the
-    // previous render's nodes are still attached to those nodes; the
-    // nodes are gone, but a reference to a listener on a detached node
-    // is still a leak until GC collects it (which it will, once no
-    // reference remains). Explicit detach makes the lifetime obvious.
     for (const detach of detachers) detach();
     detachers = [];
 
-    // Create button — a direct listener, one per render. The button is
+    // Create button — direct listener, one per render. The button is
     // re-created on every render, so the listener must be re-attached.
     const createButton = root.querySelector('[data-action="open-create-dialog"]');
     if (createButton) {
-      const onClick = (event) => handleOpenCreate(event);
+      const onClick = (event) => handleOpenCreate(event.currentTarget);
       createButton.addEventListener('click', onClick);
       detachers.push(() => createButton.removeEventListener('click', onClick));
     }
 
-    // Search input — a direct listener. The input survives re-renders
-    // (it is the one element the app does not rebuild), so the
-    // `__wired` guard prevents attaching the same listener twice on
-    // successive renders. The guard is a property on the element; a
-    // detached element loses it, which is correct (the next render
-    // creates a fresh input and a fresh listener).
+    // Search input — direct listener. The input survives re-renders,
+    // so the `__wired` guard prevents duplicate attachment.
     const searchInput = root.querySelector('[data-action="search-input"]');
     if (searchInput && !searchInput.__wired) {
       const onInput = (event) => handleSearchInput(event);
@@ -250,18 +257,34 @@ export function startApp(options = {}) {
 
     // Content container — delegation for card actions. One listener
     // matches any `[data-action]` descendant of the content region.
-    // The listener is attached fresh on every render (the container
-    // is re-created), so no `__wired` guard is needed or wanted here.
+    //
+    // The task id is read from the CLOSEST ancestor carrying
+    // `data-task-id`, not from `target.dataset.taskId`. This is the
+    // single place that decides where the id lives — the view is free
+    // to place `data-task-id` on the button or on the card, and this
+    // delegation block is the only code that has to know. A handler
+    // that read `target.dataset.taskId` directly would couple the
+    // handler to the view's DOM shape; if the view later moved the
+    // attribute to the card, every handler would silently stop
+    // matching.
     const content = root.querySelector('[data-region="content"]');
     if (content) {
       const onClick = (event) => {
-        const target = event.target.closest('[data-action]');
-        if (!target || !content.contains(target)) return;
-        const action = target.dataset.action;
-        if (action === 'edit-task') handleEditClick(target);
-        else if (action === 'delete-task') handleDeleteClick(target);
-        else if (action === 'clear-search') handleClearSearch();
-        else if (action === 'open-create-dialog') handleOpenCreate(event, target);
+        const actionEl = event.target.closest('[data-action]');
+        if (!actionEl || !content.contains(actionEl)) return;
+
+        const action = actionEl.dataset.action;
+        const taskId = actionEl.closest('[data-task-id]')?.dataset.taskId;
+
+        if (action === 'edit-task') {
+          handleEditClick(taskId, actionEl);
+        } else if (action === 'delete-task') {
+          handleDeleteClick(taskId);
+        } else if (action === 'clear-search') {
+          handleClearSearch();
+        } else if (action === 'open-create-dialog') {
+          handleOpenCreate(actionEl);
+        }
       };
       content.addEventListener('click', onClick);
       detachers.push(() => content.removeEventListener('click', onClick));
@@ -272,52 +295,64 @@ export function startApp(options = {}) {
   // Event handlers
   // ---------------------------------------------------------------------
 
-  function handleOpenCreate(event, target) {
-    dialogTrigger = target || event.currentTarget;
+  /**
+   * Open the create dialog. `trigger` is the element that received the
+   * click (or the delegated action element) — passed explicitly so
+   * this handler does not depend on `event.currentTarget`, which is
+   * the delegated content container, not the button.
+   */
+  function handleOpenCreate(trigger) {
+    dialogTrigger = trigger;
     openDialog(null, 'create');
   }
 
-  function handleEditClick(button) {
-    dialogTrigger = button;
-    const task = store.getById(button.dataset.taskId);
+  function handleEditClick(taskId, trigger) {
+    dialogTrigger = trigger;
+    if (!taskId) return;
+    const task = store.getById(taskId);
     if (!task) {
       // The task was removed between render and click. Refresh so the
-      // view matches the store; do not show an error, the user did not
-      // do anything wrong.
+      // view matches the store; do not show an error, the user did
+      // not do anything wrong.
       render();
       return;
     }
     openDialog(task, 'edit');
   }
 
-  function handleDeleteClick(button) {
-    const task = store.getById(button.dataset.taskId);
+  function handleDeleteClick(taskId) {
+    if (!taskId) return;
+    const task = store.getById(taskId);
     if (!task) {
       // Same as edit: the task is gone, refresh the view.
       render();
       return;
     }
-    // The confirmation is synchronous (window.confirm). A future
-    // improvement would replace it with a styled confirm dialog, but
-    // the current behaviour is what the user sees today.
+
+    // TODO(accessibility): window.confirm ignores the app's theme,
+    // cannot meet the register's focus-ring spec (see tokens.css
+    // --color-focus-ring), and announces inconsistently across screen
+    // readers. Replacing it is a follow-up task; it is NOT part of
+    // the design-token work. The seam for the replacement is this
+    // single call — a future `confirmDelete(task)` returning a
+    // Promise<boolean> can be dropped in with no other change.
     const confirmed = window.confirm(`Delete task "${task.title}"?`);
     if (!confirmed) return;
+
     try {
       store.deleteTask(task.id);
       render();
     } catch (error) {
       if (error instanceof NotFoundError) {
-        // The task was removed between the confirmation and the
-        // delete. Refresh; the user's intent was satisfied.
+        // The task was removed between confirmation and delete.
+        // Refresh; the user's intent was satisfied.
         render();
       } else {
-        // A storage error is not the user's fault and not the
-        // user's responsibility to fix by retrying — but the store
-        // has already rolled back, so a refresh shows the correct
-        // state.
+        // A storage error. The store has already rolled back, so a
+        // refresh shows the correct state. The console warning is the
+        // developer's debug aid; a user-facing toast is a future
+        // improvement (see the TODO above — the same seam).
         render();
-        // The console warning is the developer's debug aid. A future
-        // improvement would surface this to the user as a toast.
         console.warn('Delete failed; the task is still present.', error);
       }
     }
@@ -339,10 +374,11 @@ export function startApp(options = {}) {
    * Submit the dialog's form. Creates or updates depending on the
    * dialog mode, then closes the dialog on success.
    *
-   * The dialog calls this with the form's values; the store decides
-   * whether the values are valid. A ValidationError is shown in the
-   * dialog (the user can fix the input); anything else is a
-   * programming error and is rethrown.
+   * Ordering note: `render()` runs BEFORE `closeActiveDialog()`. See
+   * the file-level docstring "Ordering rule" — focus restoration
+   * targets an element inside `root`, so it must run against the
+   * fresh DOM the render just produced, not the one about to be
+   * replaced.
    */
   async function handleFormSubmit(values) {
     if (!activeDialog) return;
@@ -353,8 +389,8 @@ export function startApp(options = {}) {
       } else if (activeDialogMode === 'edit' && activeDialogTask) {
         store.update(activeDialogTask.id, values);
       }
-      closeActiveDialog();
       render();
+      closeActiveDialog();
     } catch (error) {
       if (error instanceof ValidationError) {
         // Show the errors in the dialog; the user fixes the fields
@@ -363,11 +399,10 @@ export function startApp(options = {}) {
         activeDialog.showErrors(error.fields);
       } else {
         // A storage error during create or update. The store has
-        // rolled back the in-memory change, so the dialog is still
-        // the right place for the user to be; close it and show a
-        // notice. The failure path is a future improvement.
-        closeActiveDialog();
+        // rolled back the in-memory change. Render first (fresh DOM),
+        // then close (focus restore lands on the fresh trigger).
         render();
+        closeActiveDialog();
         console.warn('Save failed; the change was not applied.', error);
       }
     }
@@ -381,7 +416,19 @@ export function startApp(options = {}) {
   // Dialog lifecycle
   // ---------------------------------------------------------------------
 
+  /**
+   * Open the create or edit dialog.
+   *
+   * Cleanup functions are pushed onto `dialogDetachers` in the order
+   * they should run on close. The order is: Escape handler first (stop
+   * listening), focus restoration second (return focus to the
+   * trigger), so the Escape handler cannot fire during the restore.
+   * Running in reverse would be harmless here, but the order is
+   * documented so a future addition can reason about it.
+   */
   function openDialog(task, mode) {
+    dialogDetachers = [];
+
     activeDialog = createTaskDialog({
       mode,
       task,
@@ -398,6 +445,7 @@ export function startApp(options = {}) {
     // an app-level decision, and this is where the app makes it.
     const titleInput = activeDialog.element.querySelector('input[name="title"]');
     const restoreFocus = focusOnOpen(activeDialog.element, dialogTrigger, titleInput);
+    dialogDetachers.push(restoreFocus);
 
     // Esc closes the dialog, same as the cancel button. The dialog's
     // own `close` event is not used here because it fires for submit
@@ -405,30 +453,24 @@ export function startApp(options = {}) {
     const detachEscape = onEscape(activeDialog.element, () => {
       handleDialogCancel();
     });
-
-    // Stash the detach functions on the dialog controller so
-    // closeActiveDialog can clean up. A `_cleanup` property on the
-    // controller keeps the wiring visible without a separate map.
-    activeDialog._cleanup = () => {
-      detachEscape();
-      restoreFocus();
-    };
+    dialogDetachers.push(detachEscape);
   }
 
   function closeActiveDialog() {
     if (!activeDialog) return;
+
+    // Detach the dialog's listeners first, so a focus-restore that
+    // happens to dispatch an event (it does not today; it might in the
+    // future) does not re-enter this function through the Escape
+    // handler.
+    for (const detach of dialogDetachers) detach();
+    dialogDetachers = [];
+
     const controller = activeDialog;
     activeDialog = null;
     activeDialogMode = null;
     activeDialogTask = null;
 
-    // Restore focus before destroying the dialog, so the trigger is
-    // the active element when the dialog's DOM is removed. If the
-    // dialog is destroyed first, the trigger reference is still valid
-    // (it is a DOM node), but the focus is lost in the interim.
-    if (typeof controller._cleanup === 'function') {
-      controller._cleanup();
-    }
     controller.destroy();
   }
 
@@ -445,10 +487,17 @@ export function startApp(options = {}) {
   function destroy() {
     for (const detach of detachers) detach();
     detachers = [];
+
+    for (const detach of dialogDetachers) detach();
+    dialogDetachers = [];
+
     debouncedSearch.cancel();
+
     if (activeDialog) {
       activeDialog.destroy();
       activeDialog = null;
+      activeDialogMode = null;
+      activeDialogTask = null;
     }
   }
 

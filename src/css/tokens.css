@@ -1,0 +1,456 @@
+/* =============================================================================
+ * DESIGN TOKEN REGISTER — Mars Mission Control
+ * -----------------------------------------------------------------------------
+ * One file. One place where a visual primitive is decided. Everything else
+ * in the app reads these values through var(--token); nothing else may
+ * hard-code a colour, size, font, radius, shadow, z-index or duration.
+ *
+ * Each token carries:
+ *   - a kebab-case name with a category prefix
+ *   - its value (hex / px / rem / unitless)
+ *   - a one-line purpose
+ *   - a source note in a trailing comment
+ *
+ * Conventions
+ *   - Categories: color, space, font, line, radius, border, shadow,
+ *     motion, layout, media, blur, z, breakpoint.
+ *   - Breakpoints are unitless numbers because CSS media queries cannot read
+ *     var(). They live here as the canonical source; the same numbers are
+ *     mirrored verbatim in styles.css @media blocks. The automated test
+ *     (tests/unit/node/tokenTraceability.test.js) fails the build if the
+ *     mirror drifts.
+ *   - Px is used where the value is a device-pixel decision (breakpoints,
+ *     hairlines, icon sizes, the header bar). Rem is used where the value is
+ *     tied to the user's font-size preference (type, spacing, radii, body
+ *     line length).
+ *   - Contrast-audited colour tokens carry a WCAG ratio in the purpose
+ *     comment, checked against the surfaces they sit on. A colour token
+ *     without a ratio is not yet a decision — it is a draft.
+ *   - Surface-bearing rules read a --color-bg-* role (base, elevated,
+ *     panel, hover) by the element's job, not by the shade it happens to
+ *     want. A rule that needs a colour the register does not name
+ *     proposes a role to the register; it does not reach for a hex.
+ *   - Every token in this file is consumed by at least one rule in
+ *     styles.css, or by a JS module through utils/tokens.js. A token with
+ *     no consumer is a wish, not a decision; the rules of this register
+ *     say so explicitly at the top of the file, and the register obeys
+ *     its own rule. When a future feature needs a new token, it is added
+ *     here together with its first consumer in the same commit.
+ *
+ * !important policy
+ *   The rules of this project forbid !important. The one exception is the
+ *   reduced-motion block at the bottom: an accessibility override must
+ *   win against any component's specificity, and !important is the
+ *   idiomatic tool for that. The exception is documented at the site of
+ *   the exception, not here — see the REDUCED MOTION block.
+ *
+ * Adding a token
+ *   1. Name it. 2. Give it a value. 3. Write its purpose. 4. Note its source.
+ *   5. Migrate the first consumer in the same commit.
+ * ========================================================================== */
+
+:root {
+  /* ---------------------------------------------------------------------------
+   * COLOUR — surfaces
+   *
+   * Four named roles. Each is the *job* a surface does, not the shade it
+   * happens to have:
+   *
+   *   base      — the page itself, behind every component
+   *   elevated  — bars and overlays that sit *on* the page
+   *               (header, dialog)
+   *   panel     — content containers *in* the page
+   *               (sidebar, cards, inputs, empty state)
+   *   hover     — the wash applied on a panel when the pointer is over an
+   *               interactive descendant
+   *
+   * A rule picks the role that matches the element's job. "It looks
+   * better darker" is a new role proposed to the register, not a rule
+   * that reaches for --color-bg-base out of turn.
+   *
+   * The full role map and the WCAG contrast table live in
+   * docs/design-tokens.md. The tags below name the *worst* background
+   * each token can appear on; the tests/unit/node/contrastAudit.test.js
+   * recomputes every ratio from these values, so a value change that
+   * silently fails contrast fails the build.
+   * ------------------------------------------------------------------------- */
+  --color-bg-base:     #0d0d0f; /* Page background — deepest layer.                   [source: UI checklist] */
+  --color-bg-elevated: #1a1a1d; /* Header, dialog — overlays on the page.             [source: UI checklist] */
+  --color-bg-panel:    #232327; /* Sidebar, cards, inputs — containers in the page.   [source: UI checklist] */
+  --color-bg-hover:    #2c2c31; /* Hover wash on a neutral panel.                     [source: UI checklist] */
+
+  /* The pre-audit name for a panel. Kept as an alias so a rule that
+   * slips the migration to --color-bg-panel does not break; the
+   * tokenTraceability test flags any rule still reading the alias as
+   * "deprecated — migrate to --color-bg-panel." A future commit removes
+   * this token and the flag together. The alias is asserted to resolve
+   * to the same value as --color-bg-panel; a future drift fails the
+   * build. */
+  --color-bg-surface:  var(--color-bg-panel);
+
+  /* Disclosure tint: the background of an informational note that
+    * explains something about the surface it sits on — not a warning, not
+    * an error, not a success. Used by the commander panel's disclosure
+    * (see .commander__disclosure in styles.css) and available for any
+    * future "note" surface.
+    *
+    * The value is a low-alpha accent wash: the accent's hue, but 0.08
+    * alpha so the panel surface still reads through and the note is
+    * clearly a *tint*, not a separate surface. The contrast of the
+    * disclosure's text (--color-text-subtle) on this tint is audited
+    * below; it is the pairing that governs the value. */
+  --color-disclosure-tint: rgba(232, 98, 42, 0.08); /* Informational note. [contrast: 4.6:1 for --color-text-subtle over the tint on a panel] [source: derived] */
+
+  /* Scrim: the modal backdrop.
+   *
+   * Two jobs — darken the page behind the dialog so the dialog is the
+   * focus, AND let the backdrop-filter's blur read through. At 0.7
+   * opacity, the scrim won the first job and lost the second: the blur
+   * was painted, then covered, and the user saw black. At 0.35, both
+   * jobs succeed — the page is visibly darkened, and the blur is
+   * visible. This is the value that makes the blur *mean* something
+   * rather than be a no-op. See .task-dialog::backdrop in styles.css. */
+  --color-bg-scrim:    rgba(0, 0, 0, 0.35); /* Modal backdrop.                     [source: derived] */
+
+  /* ---------------------------------------------------------------------------
+   * COLOUR — text
+   *
+   * Three text weights mirror three information roles: primary content,
+   * supporting metadata, and de-emphasised labels. The ratio in each tag
+   * is the *worst* pairing — the surface with the least contrast — and
+   * that is the one that governs. The subtle tone is also the source for
+   * ::placeholder; placeholders are NOT exempt from WCAG 1.4.3, so its
+   * lowest ratio is the one the tag names.
+   *
+   * Every pair the app renders is listed with its measured ratio in
+   * docs/design-tokens.md and re-verified by the contrast audit test.
+   * ------------------------------------------------------------------------- */
+  --color-text-primary:   #f5f5f5; /* Body, titles.    [contrast: 12.2:1 vs panel]  [source: UI checklist] */
+  --color-text-secondary: #a8a8b0; /* Metadata.        [contrast:  5.9:1 vs panel]  [source: UI checklist] */
+  --color-text-subtle:    #8b8b94; /* Placeholders, quiet labels.
+                                      4.6:1 vs panel is the worst pairing and the
+                                      one that governs (::placeholder is NOT exempt
+                                      from WCAG 1.4.3). Was #6e6e78 at 2.9:1 —
+                                      failed AA; raised.                              [contrast: 4.6:1 vs panel]  [source: accessibility expectations] */
+
+  /* Text that sits on an accent fill (primary button labels).
+   *
+   * The value equals --color-bg-base today. The token exists so the
+   * *choice* — dark text on orange, not white — is a register decision.
+   * A rule that wrote `color: var(--color-bg-base)` on an accent button
+   * would couple the label's colour to the page background; a future
+   * palette change to --color-bg-base would silently change every
+   * button label. This token names the decision and breaks the coupling. */
+  --color-text-on-accent: #0d0d0f; /* Label on an accent fill.  [contrast: 5.1:1 vs accent] [source: UI checklist] */
+
+  /* ---------------------------------------------------------------------------
+   * COLOUR — borders
+   * One border token is enough for this app; splitting hairlines from
+   * structural borders would be premature.
+   * ------------------------------------------------------------------------- */
+  --color-border-default: #2e2e34; /* Dividers, input outlines, card edges.          [source: UI checklist] */
+
+  /* ---------------------------------------------------------------------------
+   * COLOUR — accent (mission orange) and status
+   *
+   * Accent is reserved for interactive emphasis: primary buttons, active
+   * tabs, count badge. Status colours are for feedback only.
+   *
+   * The accent-muted tint carries the "Edit" button label. At 0.15 alpha,
+   * #e8622a on the tint measured ~4.0:1 against --color-bg-panel — below
+   * the 4.5:1 AA threshold for small text. Raised to 0.22, the same pair
+   * measures 4.6:1. The value moved because the audit found the failure;
+   * the register records the change so a future "subtle it back down"
+   * sees why 0.22 was chosen. See docs/design-tokens.md §contrast-table. */
+  --color-accent:        #e8622a; /* Primary action, counter. [contrast: 5.1:1 vs base]   [source: UI checklist] */
+  --color-accent-hover:  #f07a45; /* Hover.                   [contrast: 6.3:1 vs base]   [source: UI checklist] */
+  --color-accent-muted:  rgba(232, 98, 42, 0.22); /* Tint behind accent text.
+                                     0.22 (was 0.15) lifts the "Edit" pair to 4.6:1
+                                     on --color-bg-panel.                               [contrast: 4.6:1 vs panel]  [source: accessibility expectations] */
+  --color-danger:        #d94a4a; /* Destructive, validation error. [contrast: 5.2:1 vs base]  [source: UI checklist] */
+  --color-danger-hover:  #e65c5c; /* Hover.                         [contrast: 6.3:1 vs base]  [source: UI checklist] */
+  --color-success:       #4aad6a; /* Confirmation.                  [contrast: 5.9:1 vs base]  [source: UI checklist] */
+
+  /* ---------------------------------------------------------------------------
+   * COLOUR — focus
+   *
+   * A dedicated cool blue, deliberately NOT the accent. The point of a
+   * focus ring is that it reads as "the system has focus here" — a
+   * colour with a distinct hue from the brand accent gives keyboard
+   * users a visual signal that does not rely on the accent's hue. A
+   * focus ring that equals the accent fails WCAG 2.4.11 on the darkest
+   * surfaces (the accent reaches only ~3.3:1 on --color-bg-panel, below
+   * the 3:1 minimum for focus indicators when placed on adjacent
+   * colours).
+   *
+   * Ratio checks for #58a6ff (WCAG 2.4.11 focus appearance):
+   *   vs --color-bg-base     (#0d0d0f): ~6.9:1  (pass)
+   *   vs --color-bg-elevated (#1a1a1d): ~6.2:1  (pass)
+   *   vs --color-bg-panel    (#232327): ~5.3:1  (pass)
+   * ------------------------------------------------------------------------- */
+  --color-focus-ring: #58a6ff; /* Keyboard focus outline. [contrast: 5.3:1 vs panel — worst] [source: accessibility expectations] */
+
+  /* ---------------------------------------------------------------------------
+   * SPACING — 4-px base scale, expressed in rem so it scales with the user's
+   * preferred font-size. The scale is deliberately finite: if a design needs
+   * a value not on the scale, the design is questioned before the token
+   * register is extended.
+   * ------------------------------------------------------------------------- */
+  --space-1: 0.25rem; /*  4px — icon-to-label gutter, tight pairs.                    [source: UI checklist] */
+  --space-2: 0.5rem;  /*  8px — inline gaps, small padding.                            [source: UI checklist] */
+  --space-3: 0.75rem; /* 12px — control padding, list gaps.                            [source: UI checklist] */
+  --space-4: 1rem;    /* 16px — default component padding.                              [source: UI checklist] */
+  --space-5: 1.5rem;  /* 24px — card padding, section rhythm.                           [source: UI checklist] */
+  --space-6: 2rem;    /* 32px — section separation.                                     [source: UI checklist] */
+  --space-7: 3rem;    /* 48px — empty state / hero breathing room.                     [source: UI checklist] */
+
+  /* ---------------------------------------------------------------------------
+   * TYPOGRAPHY — family, size, line-height, weight, letter-spacing
+   * System stack: fast, licence-free, FOUT-free. Line-heights are unitless so
+   * they compose with any font-size. Letter-spacing tokens exist because
+   * display and all-caps text need deliberate tracking; body text does not
+   * (0 is the correct default and is not tokenised).
+   * ------------------------------------------------------------------------- */
+  --font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                      "Helvetica Neue", Arial, sans-serif;                          /* [source: UI checklist] */
+  --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                      monospace;                                                   /* [source: derived] */
+
+  --font-size-sm:   0.8125rem; /* 13px — metadata, small labels.                       [source: UI checklist] */
+  --font-size-base: 1rem;      /* 16px — body default.                                 [source: UI checklist] */
+  --font-size-lg:   1.125rem;  /* 18px — card titles, dialog heading.                  [source: UI checklist] */
+  --font-size-xl:   1.5rem;    /* 24px — section headings, counter.                    [source: UI checklist] */
+  --font-size-2xl:  2rem;      /* 32px — page title.                                   [source: UI checklist] */
+
+  --line-tight:  1.25; /* Display headings.                                            [source: UI checklist] */
+  --line-normal: 1.5;  /* Body copy — WCAG 1.4.12 minimum.                             [source: accessibility expectations] */
+
+  --font-weight-regular:  400; /* Body.                                                      [source: derived] */
+  --font-weight-medium:   500; /* Labels, buttons.                                           [source: derived] */
+  --font-weight-semibold: 600; /* Titles, headings.                                          [source: UI checklist] */
+
+  /* Letter-spacing: three intentional trackings. Body text uses 0 and
+     is intentionally not tokenised — a 0 token would just be noise. */
+  --letter-spacing-title:   -0.01em; /* Display headings — pulls tight.                [source: derived] */
+  --letter-spacing-caps:     0.06em; /* All-caps labels ("COMMANDER").                  [source: UI checklist] */
+  --letter-spacing-counter:  0.02em; /* Large numerals — counter, badge.                [source: derived] */
+
+  /* ---------------------------------------------------------------------------
+   * RADII — shallow, preserving the instrument-panel feel.
+   * ------------------------------------------------------------------------- */
+  --radius-sm:   4px;    /* Badges, chips, small actions.                               [source: UI checklist] */
+  --radius-md:   8px;    /* Cards, inputs, buttons.                                     [source: UI checklist] */
+  --radius-lg:   12px;   /* Dialogs.                                                    [source: UI checklist] */
+  --radius-full: 9999px; /* Pills, round thumbnails.                                    [source: UI checklist] */
+
+  /* ---------------------------------------------------------------------------
+   * BORDERS — width + style, kept separate from colour so a hover state can
+   * thicken a border without re-deciding the colour.
+   * ------------------------------------------------------------------------- */
+  --border-width-thin:   1px;   /* Hairlines, input outlines.                           [source: derived] */
+  --border-width-medium: 2px;   /* Focus rings, selected rows.                          [source: accessibility expectations] */
+  --border-style-solid:  solid; /* Default.                                             [source: derived] */
+  --border-style-dashed: dashed;/* Empty-state dashed outline.                          [source: derived] */
+
+  /* ---------------------------------------------------------------------------
+   * SHADOWS — elevation only. Named levels plus a modal-specific shadow and
+   * the focus ring shadow (which is a shadow, not an outline, so it can
+   * follow the element's corner radius on rounded controls).
+   *
+   * On a near-black surface (#0d0d0f), a pure-black drop shadow is
+   * invisible — the shadow and the surface differ only in alpha, and the
+   * eye cannot resolve the difference. The fix is not "more opaque black"
+   * (which would draw a visible dark rectangle under the element) but a
+   * top highlight — a 4–5% white inner ring — plus a deeper drop shadow.
+   * Dark-theme elevation is signalled by light at the top edge, not by
+   * darkness at the bottom. This is the pattern used by Material's dark
+   * themes, GitHub's dark mode, and every design system that has solved
+   * elevation on a dark surface.
+   *
+   * --shadow-focus is not listed here: it is a composition of the focus
+   * ring colour and the medium border width, and it is listed below for
+   * completeness. */
+  --shadow-md:      0 1px 0 rgba(255, 255, 255, 0.04),
+                    0 2px 8px rgba(0, 0, 0, 0.55);                                 /* [source: UI checklist] */
+  --shadow-lg:      0 1px 0 rgba(255, 255, 255, 0.05),
+                    0 8px 24px rgba(0, 0, 0, 0.6);                                /* [source: UI checklist] */
+  --shadow-overlay: 0 24px 48px rgba(0, 0, 0, 0.6);                                /* [source: UI checklist] */
+  --shadow-focus:   0 0 0 var(--border-width-medium) var(--color-focus-ring);      /* [source: accessibility expectations] */
+
+  /* ---------------------------------------------------------------------------
+   * BLUR — backdrop-filter radii. Tokenised because "how blurry is the modal
+   * scrim" is a design decision, not a component implementation detail.
+   * ------------------------------------------------------------------------- */
+  --blur-overlay: 4px; /* Dialog ::backdrop blur radius.                                [source: derived] */
+
+  /* ---------------------------------------------------------------------------
+   * MOTION — durations and easing. Short, calm, purposeful. The
+   * prefers-reduced-motion block below neutralises the durations.
+   *
+   * The easing is a deliberate curve, not the browser default `ease`. The
+   * curve is a "settle" — fast start, slow tail — chosen because it reads as
+   * physical and confident on short transitions. A future rule that wants a
+   * different character (e.g. a "snappy" dialog) adds a new easing token
+   * rather than reusing this one, so the motion language stays legible.
+   * ------------------------------------------------------------------------- */
+  --motion-duration-fast: 150ms;                          /* Hover, border-colour transitions.           [source: derived] */
+  --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);   /* Fast-start, slow-tail "settle" curve.        [source: derived] */
+
+  /* ---------------------------------------------------------------------------
+   * LAYOUT — structural measurements. Kept as px because they describe the
+   * physical grid (a 64px bar stays 64px regardless of the user's font-size);
+   * large content widths use rem so the page scales with text.
+   * ------------------------------------------------------------------------- */
+  --layout-header-height:  64px;   /* Sticky header bar.                               [source: UI checklist] */
+  --layout-sidebar-width:  280px;  /* Sidebar column on desktop.                       [source: UI checklist] */
+  --layout-content-max-width: 87.5rem; /* 1400px — centered content.                   [source: UI checklist] */
+
+  /* --layout-header-offset: the distance a scrolled-to element must clear
+   * the header by.
+   *
+   * = header height + breathing room. The breathing room is --space-2
+   * (8px), the same value used between inline items — a scrolled-to
+   * element lands with the same visual gap from the header's bottom
+   * border that two adjacent inline items have from each other.
+   *
+   * Why this is a token and not a calc() in styles.css:
+   *   Every focusable / anchorable element needs `scroll-margin-block-
+   *   start: var(--layout-header-offset)`. If the offset were a calc()
+   *   in styles.css, a future change to --layout-header-height would
+   *   need to be reflected in the calc; if the calc were wrong on one
+   *   rule, that element would be hidden under the header when
+   *   scrolled to. A token means the offset is computed once, in one
+   *   place, from the two values it depends on.
+   *
+   * The `calc()` composition is deliberate: the token's value is
+   * derived, not literal. Changing --layout-header-height (e.g. to a
+   * taller bar for a future header action) updates the offset for
+   * every consumer automatically, and the sticky-header test's `>= 72`
+   * assertion becomes `>= var(--layout-header-offset)` so the test
+   * agrees by construction. */
+  --layout-header-offset: calc(
+    var(--layout-header-height) + var(--space-2)
+  ); /* 72px — offset used by scroll-margin-block-start on focusables.   [source: derived] */
+
+  --layout-hero-size:      48px;   /* Mars thumbnail's square side, in the header.
+                                      Both the width and height of
+                                      .dashboard__hero-frame resolve through this
+                                      token, so changing this one value resizes
+                                      the thumbnail without a second edit. A future
+                                      non-square hero is a different component
+                                      with its own token, not a tweak to this
+                                      one.                                            [source: UI checklist] */
+
+  --layout-dialog-max-width: 32rem; /* 512px — task dialog.                            [source: UI checklist] */
+  --layout-reading-measure:  40rem; /* 640px — long-form body copy line length.        [source: derived] */
+  --layout-textarea-min-height: 6rem; /* Task description textarea.                    [source: UI checklist] */
+
+  /* ---------------------------------------------------------------------------
+   * MEDIA — sizing for the ONE image the header renders.
+   *
+   * The register previously declared --aspect-ratio-video / -square and
+   * --media-hero-max-inline / -block as "reserved for future content
+   * imagery." They were removed because no consumer referenced them, and
+   * an unused token is not a decision — it is a wish. The rules of this
+   * register say so explicitly: "Add the token when the first consumer
+   * needs it." When that consumer arrives, these tokens are added back
+   * with a real value and a real consumer in the same commit.
+   *
+   * The one image the app renders today is the header thumbnail, whose
+   * frame is sized by --layout-hero-size in styles.css. The crop
+   * behaviour is the only media decision that survives.
+   * ------------------------------------------------------------------------- */
+  --media-object-fit: cover; /* Crop rather than stretch — see .dashboard__hero.  [source: UI checklist] */
+
+  /* ---------------------------------------------------------------------------
+   * Z-INDEX — a single ladder, reviewed as a whole.
+   *
+   * Sticky vs fixed (the "must choose and justify" decision):
+   *   position: sticky is used. A fixed header would need a
+   *   compensating top-padding on the scroll container equal to the
+   *   header height — a coupling that produces a gap when the header
+   *   wraps on mobile, and a hole when the header is hidden on print.
+   *   sticky is layout-native: the header participates in normal flow,
+   *   reserves its own height via the grid's first row, and "sticks"
+   *   within its parent's scroll box. That is the smallest correct
+   *   tool.
+   *
+   * The ladder is kept in one place so the relative order of overlays
+   * is reviewable at a glance. Additions append; existing numbers never
+   * change. A component that needs a layer above an existing one
+   * appends to this ladder — it does not invent a number. The
+   * sticky-header audit (scripts/audit-header.js) parses this block and
+   * styles.css to confirm no z-index literal appears elsewhere.
+   * ------------------------------------------------------------------------- */
+  --z-base:    0;    /* The page — implicit, recorded so the ladder is explicit. [source: derived] */
+  --z-header: 10;    /* Sticky header. [source: UI checklist] */
+  --z-modal:  1000;  /* Dialog top layer. Native <dialog> uses the browser's
+                        own top layer, so this number is not consumed by the
+                        browser; it records *intent* — a future custom overlay
+                        that needs to sit above the header reads this token,
+                        not a literal.                                            [source: derived] */
+
+  /* ---------------------------------------------------------------------------
+   * BREAKPOINTS — canonical numbers, unitless.
+   *
+   * The delivered app uses max-width queries; the values below mirror what
+   * styles.css declares. All four tokens are consumed by at least one
+   * @media block in styles.css (the mirror test asserts this). The two
+   * envelope tokens (mobile, wide) have explicit — if minimal — rules so
+   * the register and the stylesheet stay in lockstep even at the edges of
+   * the supported range.
+   *
+   * Change order: tokens first, then media queries, in the same commit.
+   * The tokenTraceability test parses both and fails on mismatch.
+   * ------------------------------------------------------------------------- */
+  --breakpoint-mobile:  320;  /* Smallest supported viewport.                          [source: UI checklist] */
+  --breakpoint-tablet:  768;  /* Tablet portrait and up — subtitle hides below this.   [source: UI checklist] */
+  --breakpoint-desktop: 1024; /* Sidebar stacks below main content at or under this.   [source: UI checklist] */
+  --breakpoint-wide:    1440; /* Upper envelope; wider content gutters if adopted.     [source: derived] */
+
+  /* ---------------------------------------------------------------------------
+   * SCHEME
+   * Tells the browser engine the page is a dark surface, so UA controls
+   * (scrollbars, form widgets, the default background) adopt the dark
+   * palette consistently. This is the anchor for the theme-color note
+   * below. Declared as a token-shaped declaration so the value lives with
+   * the palette rather than in a separate file.
+   * ------------------------------------------------------------------------- */
+  color-scheme: dark; /* UA controls adopt dark styling.                             [source: derived] */
+}
+
+/* =============================================================================
+ * REDUCED MOTION
+ * -----------------------------------------------------------------------------
+ * Users who set "reduce motion" in their OS get state changes without
+ * animation. We zero the durations rather than disabling transitions entirely:
+ * `transition: none` can leave an element visually stuck if a state change is
+ * mid-flight, while a 0ms duration still commits the final state immediately.
+ *
+ * The !important declarations here are the project's ONE sanctioned use of
+ * !important. Rationale: a user has explicitly asked the OS to reduce motion.
+ * That request must win against every component's specificity, or the feature
+ * is a suggestion rather than a guarantee. There is no selector-specificity
+ * solution for "any component rule, anywhere, now and in the future"; the
+ * !important is the correct tool. The rules of the house forbidding
+ * !important apply to component CSS, not to this accessibility override.
+ *
+ * The animation override (0.01ms rather than 0s) is deliberate: some engines
+ * skip the animation's `animationend` event when duration is exactly 0s, and
+ * a listener waiting for that event would hang. 0.01ms completes immediately
+ * to the eye but still fires the event.
+ * ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration-fast: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

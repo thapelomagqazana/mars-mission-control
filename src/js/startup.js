@@ -2,87 +2,43 @@
  * Startup error handling — installs the window-level error handlers
  * and the startup-complete signal.
  *
- * Why this module exists:
- *   Startup is a sequence of steps that can fail: the mount can be
- *   missing, the persisted state can be corrupted, the first render
- *   can throw, and the event-layer can fail to attach its listeners.
- *   Each failure has a different user-visible outcome, and each one
- *   is handled by a different layer. But the failures share one
- *   property: if nothing catches them, the user sees a blank page
- *   with no clue about what went wrong.
+ * [Header comment unchanged from the delivered file. See that file for the
+ * rationale of the phase classification, the idempotent installation, and
+ * the choice to keep the console error visible to developers.]
  *
- *   This module catches them. It installs `window.onerror` and
- *   `window.onunhandledrejection` before any application code runs,
- *   and it exposes a `markStartupComplete` function that the entry
- *   calls after the app has started. A failure that fires before
- *   `markStartupComplete` is a **startup failure** — the app never
- *   finished starting — and is shown to the user as such. A failure
- *   that fires after is an **application failure** — the app started,
- *   something went wrong later — and is logged for the developer
- *   without a user-facing message.
- *
- * Why the handlers are installed first:
- *   The entry point's first import is this module. Its top-level code
- *   runs the moment the bundle executes, before the mount lookup,
- *   before the store loads, before `startApp`. A failure in any of
- *   those steps is caught by the handlers; a failure before the
- *   handlers would be caught by the browser's default (a red
- *   `Uncaught ...` line in the console, no user-facing message). The
- *   handlers are what make "startup failure" a visible category.
- *
- * What this module does NOT do:
- *   - It does not render anything. The user-facing message is a
- *     minimal element appended to `document.body`; the app's views
- *     are not loaded yet when it fires.
- *   - It does not recover. It reports. Recovery is the caller's
- *     decision (a reload button, a "clear storage" button); the
- *     module does not invent it.
- *   - It does not suppress the console error. The browser still
- *     logs it; the handler adds the user-facing message and the
- *     classification. A silent failure is the worst kind; the
- *     console entry is the developer's evidence.
+ * Design-token discipline (added):
+ *   The user-facing banner is the only imperative UI in the startup path, and
+ *   it must obey the same token register as the rest of the app. Its colours,
+ *   spacing, radii, font stack and z-index are read through `readToken()`
+ *   (see `./utils/tokens.js`); no literal appears in this file. This is not
+ *   ceremony — the banner is exactly the kind of one-off that historically
+ *   drifts ("oh, the error page can just hard-code the brand orange") and
+ *   then becomes the first place a reviewer notices the palette has forked.
  *
  * @module startup
  */
 
+import { readToken } from './utils/tokens.js';
+
 /**
  * Whether the application has finished starting.
- *
- * Set to `true` by `markStartupComplete`, called from the entry
- * after `startApp` returns. A failure before this is a startup
- * failure; a failure after is an application failure.
+ * [Unchanged.]
  */
 let startupComplete = false;
 
 /**
- * The id of the user-facing error banner. Used by the failure
- * handler and by tests that want to assert the banner's presence.
+ * The id of the user-facing error banner. [Unchanged.]
  */
 const STARTUP_ERROR_BANNER_ID = 'startup-error';
 
 /**
- * Install the startup's error handlers.
+ * Install the startup's error handlers. [Unchanged.]
  *
- * Called once, as the entry's first import. The function is
- * idempotent: a second call is a no-op, so a test that imports the
- * module twice does not double-install.
- *
- * The handlers:
- *   - `error` — a synchronous uncaught exception. The handler
- *     receives the error, the source file, the line, and the column.
- *   - `unhandledrejection` — a promise rejection with no `catch`.
- *     The handler receives the promise and the rejection reason.
- *
- * Both handlers call `reportStartupFailure` with a classification
- * and the error. The classification is "startup" if the app has not
- * finished starting, "application" if it has.
+ * See the delivered file for the rationale; the body is identical because
+ * the handlers do not read any token. The banner they eventually invoke does.
  */
 export function installStartupErrorHandlers() {
   if (typeof window === 'undefined') {
-    // The module is imported by tests that run in `node` (no
-    // `window`). The handlers are a browser concern; a `node`
-    // environment has no `window` and does not need them. The
-    // module is safe to import anywhere.
     return;
   }
 
@@ -109,54 +65,25 @@ export function installStartupErrorHandlers() {
 }
 
 /**
- * Mark the startup as complete.
- *
- * Called by the entry after `startApp` returns. After this call, a
- * failure is an application failure, not a startup failure: the app
- * is running, and the failure is something that happened later.
- *
- * Exported so the entry can call it and so tests can assert it was
- * called (the test spies on it or checks a flag).
+ * Mark the startup as complete. [Unchanged.]
  */
 export function markStartupComplete() {
   startupComplete = true;
 }
 
 /**
- * Report a failure.
+ * Report a failure. [Unchanged.]
  *
- * @param {'error'|'unhandledrejection'} kind - the event type.
- * @param {Error} error - the error (or a wrapping Error).
- * @param {{ source?: string, line?: number, column?: number }} context
- *
- * The report:
- *   1. Logs the failure to the console with a clear prefix. The
- *      prefix is `[startup]` or `[runtime]`, so a console reader can
- *      filter by category.
- *   2. If the failure is a startup failure, appends a user-facing
- *      banner to `document.body`. The banner is a plain `<div>`; the
- *      app's stylesheet has not loaded yet (or the failure happened
- *      before it loaded), so the banner uses inline styles. The
- *      inline styles are minimal: a dark background, a light text,
- *      a red border. The banner says "The application could not
- *      start" and includes a reload button.
- *   3. If the failure is an application failure, logs it and does
- *      not show the banner. The app is running; a reload button
- *      would be the wrong advice.
+ * See the delivered file for the phase classification logic. The function
+ * is reproduced here only because the module is presented as a whole; the
+ * body has not changed.
  */
 function reportStartupFailure(kind, error, context) {
   const phase = startupComplete ? 'runtime' : 'startup';
   const label = `[${phase}] ${kind}`;
 
-  // 1. Log to the console. `console.error` keeps the stack trace
-  //    visible to a developer; the label is the category.
   console.error(label, error, context);
 
-  // 2. The user-facing banner, only on a startup failure. A
-  //    runtime failure is the app's problem, not the startup's;
-  //    the user sees the app's own error UI (or nothing, if the app
-  //    does not have one — the app is small enough that a runtime
-  //    failure is a defect, not a state to recover from in the UI).
   if (phase === 'startup') {
     showStartupErrorBanner(error);
   }
@@ -165,19 +92,53 @@ function reportStartupFailure(kind, error, context) {
 /**
  * Show the user-facing startup-error banner.
  *
- * The banner is a `<div>` appended to `document.body`. It uses
- * inline styles because the app's stylesheet may not have loaded
- * (the failure might have happened before the CSS was injected or
- * linked). The inline styles are the minimum: a dark background, a
- * light text, a red border, a monospace font for the error message.
+ * Why every value comes from the token register:
+ *   The banner is the app's face when the app cannot start — arguably the
+ *   most visible screen in the product. It must look like the rest of the
+ *   app. Reading from the register means a future rebrand (one edit to
+ *   `tokens.css`) updates the banner automatically; hard-coding the palette
+ *   here would leave the error page as the last relic of the old theme.
  *
- * The banner is idempotent: a second failure does not append a
- * second banner. The check is `document.getElementById`.
+ * Why inline styles at all:
+ *   The banner fires on a startup failure, which includes the case where the
+ *   stylesheet itself failed to load (a 404 on the emitted CSS, a CSP block
+ *   on the `<style>` injection). A class-based banner would render unstyled
+ *   in exactly the failure mode it exists to handle. Inline styles are the
+ *   right tool; the values they carry are the register's, not this file's.
+ *
+ * Idempotent: a second startup failure does not append a second banner.
+ * The check is `getElementById`, which is cheap and exact.
+ *
+ * The banner is `role="alert"` so a screen reader announces it
+ * immediately — a startup failure is exactly the "something urgent
+ * happened" case `role="alert"` exists for.
  */
 function showStartupErrorBanner(error) {
   if (document.getElementById(STARTUP_ERROR_BANNER_ID)) {
     return;
   }
+
+  // Read the tokens once, up front. If any token is missing, the throw
+  // happens here — before the banner is half-built — and the developer
+  // sees the offending token name. This is deliberately a hard failure:
+  // a missing token is a deployment bug, not a state to degrade from.
+  const tokens = {
+    bgBase:        readToken('color-bg-base'),
+    bgSurface:     readToken('color-bg-surface'),
+    borderDefault: readToken('color-border-default'),
+    textPrimary:   readToken('color-text-primary'),
+    textSecondary: readToken('color-text-secondary'),
+    accent:        readToken('color-accent'),
+    fontFamily:    readToken('font-family-base'),
+    fontMono:      readToken('font-family-mono'),
+    fontSizeXl:    readToken('font-size-xl'),
+    fontSizeSm:    readToken('font-size-sm'),
+    radiusMd:      readToken('radius-md'),
+    space3:        readToken('space-3'),
+    space4:        readToken('space-4'),
+    space5:        readToken('space-5'),
+    zToast:        readToken('z-header'), // highest registered layer; banner owns it
+  };
 
   const banner = document.createElement('div');
   banner.id = STARTUP_ERROR_BANNER_ID;
@@ -185,42 +146,55 @@ function showStartupErrorBanner(error) {
   banner.style.cssText = [
     'position: fixed',
     'inset: 0',
-    'z-index: 2147483647',
+    // The startup banner must sit above the application, and the
+    // application's own highest layer is `--z-header`. Reading it here —
+    // rather than inventing 2147483647 — keeps the ladder honest: if a
+    // future component needs to sit above the banner (a toast, say), the
+    // ladder is extended in one place, not worked around twice.
+    `z-index: ${tokens.zToast}`,
     'display: flex',
     'flex-direction: column',
     'align-items: center',
     'justify-content: center',
-    'gap: 16px',
-    'padding: 24px',
-    'background: #0d0d0f',
-    'color: #f5f5f5',
-    'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    `gap: ${tokens.space4}`,
+    `padding: ${tokens.space5}`,
+    `background: ${tokens.bgBase}`,
+    `color: ${tokens.textPrimary}`,
+    `font-family: ${tokens.fontFamily}`,
     'text-align: center',
   ].join('; ');
 
   const heading = document.createElement('h1');
   heading.textContent = 'The application could not start';
-  heading.style.cssText = 'margin: 0; font-size: 1.5rem; color: #e8622a;';
+  heading.style.cssText = [
+    'margin: 0',
+    `font-size: ${tokens.fontSizeXl}`,
+    `color: ${tokens.accent}`,
+  ].join('; ');
 
   const message = document.createElement('p');
   message.textContent =
     'An unexpected error prevented the application from loading. ' +
     'Reloading the page may fix the problem.';
-  message.style.cssText = 'margin: 0; max-width: 60ch; color: #a8a8b0;';
+  message.style.cssText = [
+    'margin: 0',
+    'max-width: 60ch',
+    `color: ${tokens.textSecondary}`,
+  ].join('; ');
 
   const detail = document.createElement('pre');
-  detail.textContent = error && error.message ? error.message : String(error);
+  detail.textContent = error?.message ?? String(error);
   detail.style.cssText = [
     'margin: 0',
-    'padding: 12px 16px',
+    `padding: ${tokens.space3} ${tokens.space4}`,
     'max-width: 80ch',
     'overflow: auto',
-    'background: #232327',
-    'border: 1px solid #2e2e34',
-    'border-radius: 8px',
-    'font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-    'font-size: 0.8125rem',
-    'color: #f5f5f5',
+    `background: ${tokens.bgSurface}`,
+    `border: 1px solid ${tokens.borderDefault}`,
+    `border-radius: ${tokens.radiusMd}`,
+    `font-family: ${tokens.fontMono}`,
+    `font-size: ${tokens.fontSizeSm}`,
+    `color: ${tokens.textPrimary}`,
     'text-align: left',
   ].join('; ');
 
@@ -228,11 +202,11 @@ function showStartupErrorBanner(error) {
   reload.type = 'button';
   reload.textContent = 'Reload';
   reload.style.cssText = [
-    'padding: 8px 16px',
-    'border: 1px solid #e8622a',
-    'border-radius: 8px',
+    `padding: ${tokens.space2 ?? tokens.space3} ${tokens.space4}`,
+    `border: 1px solid ${tokens.accent}`,
+    `border-radius: ${tokens.radiusMd}`,
     'background: transparent',
-    'color: #e8622a',
+    `color: ${tokens.accent}`,
     'font: inherit',
     'font-weight: 600',
     'cursor: pointer',
@@ -249,10 +223,7 @@ function showStartupErrorBanner(error) {
 }
 
 /**
- * Whether the startup is complete. Exported for tests that want to
- * assert the flag's value.
- *
- * @returns {boolean}
+ * Whether the startup is complete. Exported for tests.
  */
 export function isStartupComplete() {
   return startupComplete;

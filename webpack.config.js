@@ -9,6 +9,17 @@
  *       production  → MiniCssExtractPlugin.loader (linked .css file)
  *   - Static assets (Mars imagery is remote; local assets are decorative only).
  *
+ * Design-token discipline (added for the theme-color path):
+ *   The HTML entry needs one design value — the browser chrome colour
+ *   (`<meta name="theme-color">`). Its canonical source is
+ *   --color-bg-elevated in src/css/tokens.css. This config reads it from
+ *   that file at build time and injects it into the template via
+ *   HtmlWebpackPlugin's templateParameters, so src/index.html contains
+ *   zero hand-written design literals. This is the only build-time
+ *   coupling between the register and the HTML, and it is a small regex
+ *   against a file this project owns — the same file the tokenTraceability
+ *   test asserts is the only place a hex colour may appear.
+ *
  * Two modes:
  *   - development: webpack-dev-server on http://localhost:8080 with HMR
  *     enabled (the app falls back to full reload because its modules do
@@ -28,20 +39,28 @@
  *   production; the development build does not carry it, which is
  *   what keeps the dev loop's CSS HMR working.
  *
- *   A future change that wants to unify the two (e.g., always
- *   extract) would trade the dev loop's HMR for a single code path.
- *   The current choice keeps the dev loop fast and the production
- *   build CSP-safe.
+ * CSS import order — a build-time contract, not a runtime convention:
+ *   `src/js/index.js` imports `../css/tokens.css` BEFORE `../css/styles.css`.
+ *   This is the order the loader chain concatenates in. If a future
+ *   contributor reorders the imports, `var(--…)` resolves to nothing on
+ *   first paint and the app renders unstyled — a failure that no unit
+ *   test catches today. This config's role is to document the invariant;
+ *   the enforcement is a comment in index.js and (optionally) a future
+ *   unit test that reads the entry's source. The change is not to enforce
+ *   it here — webpack has no hook that says "this import must precede
+ *   that one" — but to make the invariant visible where CSS processing
+ *   is described.
  *
  * Production settings declaration:
  *   `docs/production-build.md` is the reviewable summary of the
  *   production settings: mode, output.path, output.filename,
  *   output.chunkFilename, output.publicPath, output.clean, devtool,
- *   optimization.minimize, target. Every setting is either explicit
- *   here or inherited from `mode: 'production'` with a comment
- *   saying so. A change to a setting is a change to the doc in the
- *   same commit; `tests/unit/node/productionBuild.test.js` asserts
- *   the config's values against the doc.
+ *   optimization.minimize, target, templateParameters.themeColor. Every
+ *   setting is either explicit here or inherited from
+ *   `mode: 'production'` with a comment saying so. A change to a
+ *   setting is a change to the doc in the same commit;
+ *   `tests/unit/node/productionBuild.test.js` asserts the config's
+ *   values against the doc.
  *
  * Run:
  *   npm start        → development server
@@ -62,18 +81,98 @@
  */
 
 const path = require('node:path');
+const fs = require('node:fs'); // used by readTokenFromSource
 const HtmlWebpackPlugin = require('html-webpack-plugin');
-const CopyWebpackPlugin = require('copy-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
-/** Absolute paths keep relative-path mistakes from silently breaking builds. */
+/**
+ * Absolute paths keep relative-path mistakes from silently breaking builds.
+ * `tokensFile` is a path the config owns, not a path derived from the
+ * current working dir: the register is read at build time, and a wrong
+ * path must fail the build rather than fall back to some other file.
+ */
 const PATHS = {
   src: path.resolve(__dirname, 'src'),
   entry: path.resolve(__dirname, 'src/js/index.js'),
   htmlTemplate: path.resolve(__dirname, 'src/index.html'),
+  tokensFile: path.resolve(__dirname, 'src/css/tokens.css'),
   assets: path.resolve(__dirname, 'src/assets'),
   output: path.resolve(__dirname, 'dist'),
 };
+
+/**
+ * Read a design token's value from the register file.
+ *
+ * Why this is a build-time read (and not a runtime read):
+ *   The one place HTML needs a design value is `<meta name="theme-color">`,
+ *   which the browser reads at parse time — before JavaScript runs. A
+ *   runtime read (the `readToken()` in src/js/utils/tokens.js) cannot
+ *   serve this case; the meta must be in the emitted HTML. The build is
+ *   the last moment at which the value is still sourced from the register
+ *   without hand-editing the template.
+ *
+ * Why this is synchronous and regex-based:
+ *   The webpack config is evaluated synchronously. Adding an async
+ *   filesystem read would mean either a `module.exports = Promise` (which
+ *   webpack's older config-loading path did not support, and which
+ *   surprises contributors) or a `child_process` (worse). A sync
+ *   `readFileSync` of a file this project owns is the right tool.
+ *
+ * Why the regex is narrow:
+ *   The register is a hand-written CSS file with one declaration per
+ *   line. A regex that matched arbitrary CSS would be fragile; a regex
+ *   that matches `--<name>: <value>;` is exact for this file's shape.
+ *   The narrowness is the feature: if a future change reformats the
+ *   register in a way the regex cannot read, the config throws a clear
+ *   error rather than silently producing a wrong value.
+ *
+ * @param {string} tokenName - bare name, without the leading `--`.
+ * @returns {string} the token's declared value.
+ * @throws {Error} if the token is not declared, or if its value is
+ *   another var() (which this reader deliberately does not follow —
+ *   a theme-color needs a concrete value, not a reference).
+ */
+function readTokenFromSource(tokenName) {
+  let source;
+  try {
+    source = fs.readFileSync(PATHS.tokensFile, 'utf8');
+  } catch (err) {
+    throw new Error(
+      `Build error: could not read design tokens at ${PATHS.tokensFile}. ` +
+        `The HTML template needs --${tokenName} for theme-color. ` +
+        `Original error: ${err.message}`
+    );
+  }
+
+  // Escape the token name's regex metacharacters so --breakpoint-tablet
+  // cannot accidentally match --breakpoint-tablet-wide. The character
+  // class below is the standard "escape a literal for use in a regex"
+  // set: . * + ? ^ $ { } ( ) | [ ] and backslash. It is written as a
+  // regex literal for readability — a raw-string form cannot be used
+  // here because the class itself contains `${`, which a template
+  // literal would read as an interpolation.
+  const escaped = tokenName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`--${escaped}\\s*:\\s*([^;]+);`);
+
+  const match = source.match(pattern);
+  if (!match) {
+    throw new Error(
+      `Build error: token --${tokenName} not found in ${PATHS.tokensFile}. ` +
+        `The HTML template references it for theme-color; add the token ` +
+        `to the register or update the template's expression.`
+    );
+  }
+
+  const value = match[1].trim();
+  if (value.startsWith('var(')) {
+    throw new Error(
+      `Build error: token --${tokenName} resolves to another var(), which ` +
+        `the HTML template cannot consume (theme-color needs a literal). ` +
+        `Give this token a literal value in ${PATHS.tokensFile}.`
+    );
+  }
+  return value;
+}
 
 /**
  * Build the webpack configuration for the requested mode.
@@ -93,124 +192,125 @@ function buildConfig(env, argv) {
   /**
    * Open the browser on `npm start` only when not in CI.
    *
-   * `open: true` is a developer convenience: the terminal starts the
-   * server and the browser opens to the app. In CI, there is no
-   * browser to open; `open: true` either fails (no display) or emits a
-   * warning (no browser). The `CI` env var is set by every major CI
-   * provider (GitHub Actions, GitLab, CircleCI); a local run does not
-   * set it.
-   *
-   * The alternative — a `--no-open` flag in the CI script — works, but
-   * it hides the decision in the script. Reading `CI` in the config
-   * makes the decision visible: the config opens the browser for a
-   * developer and does not for CI.
+   * In CI the command runs headless, and an attempt to open a browser
+   * either does nothing or fails the process on a machine with no
+   * display. Gating on `process.env.CI` (set by every common CI
+   * provider) keeps the local convenience without the CI breakage.
    */
   const openBrowser = !process.env.CI;
 
   /**
    * The CSS injector differs by mode.
    *
-   * - `style-loader` (development): injects the CSS into a `<style>`
-   *   element. Fast, hot-reloadable, no separate file. The dev loop
-   *   is the priority.
-   * - `MiniCssExtractPlugin.loader` (production): extracts the CSS
-   *   into a real file. The `<link>` is injected by
-   *   `HtmlWebpackPlugin`; the browser blocks rendering until the
-   *   file loads (no FOUC), and a strict CSP allows a linked
-   *   stylesheet but blocks an inline `<style>`.
+   * Development uses `style-loader`: CSS is injected into a `<style>`
+   * element at runtime, which is what makes CSS hot-reload work — the
+   * loader can swap the style content without a page reload.
    *
-   * `css-loader` is in the chain in both modes; only the injector
-   * differs. Adding `style-loader` to production would be a defect
-   * (the CSS contract's acceptance criterion names it).
+   * Production uses `MiniCssExtractPlugin.loader`: CSS is emitted as a
+   * real `.css` file linked from the HTML, which a strict CSP
+   * (`style-src 'self'`) accepts and which avoids a flash of unstyled
+   * content (the `<link>` blocks rendering until the CSS arrives).
+   *
+   * The rest of the loader chain (`css-loader`) is identical in both
+   * modes; only the injector that consumes css-loader's output changes.
    */
   const cssInjector = isProduction
     ? MiniCssExtractPlugin.loader
     : 'style-loader';
 
+  /**
+   * Read the theme-color from the register.
+   *
+   * Done here (not inline in the plugin list) so the error surfaces
+   * with a message that names the token and the fix. Doing it inside
+   * `new HtmlWebpackPlugin({...})` would produce a stack trace from
+   * deep in webpack's config parsing, which is harder to read.
+   *
+   * The read happens unconditionally (both modes), so a missing token
+   * fails `npm start` as well as `npm run build`. A dev-only failure
+   * is the right behaviour: the dev build's HTML needs the same value,
+   * and catching it in dev is cheaper than catching it in prod.
+   */
+  const themeColor = readTokenFromSource('color-bg-elevated');
+
   return {
     // ----------------------------------------------------------------
     // Mode — controls webpack's built-in optimizations and devtool.
-    // Explicitly 'production' or 'development'. The mode is not
-    // inherited from a default; it is the declaration that everything
-    // else follows from. `optimization.minimize` (below) is inherited
-    // from this mode: production mode enables TerserPlugin.
+    //
+    // 'production' turns on minification, tree-shaking, and scope
+    // hoisting; 'development' keeps the output readable and the build
+    // fast. The explicit ternary means the mode is never inferred from
+    // a missing flag.
     // ----------------------------------------------------------------
     mode: isProduction ? 'production' : 'development',
 
     // ----------------------------------------------------------------
     // Entry — single application entry point (the "app bootstrapper").
-    // Layer wiring (store → views → app → index) lives in source, not here.
+    //
+    // Layer wiring (store → views → app → index) lives in source, not
+    // here. The entry imports the store, the views, the event layer,
+    // and the CSS in the order that source specifies; webpack only
+    // needs to know where to start.
     // ----------------------------------------------------------------
     entry: PATHS.entry,
 
     // ----------------------------------------------------------------
-    // Output — ./dist. Filenames include a content hash in production so
-    // long-term caching works correctly when the app is deployed statically.
+    // Output — ./dist.
+    //
+    // Filenames include a content hash in production so long-term
+    // caching works correctly when the app is deployed statically: a
+    // changed file gets a new name, an unchanged file keeps its name.
+    // `chunkFilename` covers split chunks (e.g. the vendor chunk that
+    // `splitChunks` produces in production).
+    //
+    // `clean: true` removes stale files before each build, which
+    // prevents orphaned assets when a filename changes.
+    //
+    // `publicPath: '/'` makes asset URLs absolute from the site root,
+    // which is correct for a single-page app served from the root.
     // ----------------------------------------------------------------
     output: {
-      // `path` is absolute (from `PATHS.output` = `path.resolve(__dirname,
-      // 'dist')`). Webpack requires `output.path` to be absolute; a
-      // relative path is a build error.
       path: PATHS.output,
-      // `filename` is content-hashed in production. A change to the
-      // file's content produces a new hash and a new filename; the
-      // browser caches the old file by its hash and fetches the new
-      // one. In development, the hash is omitted so the filename is
-      // stable for debugging.
       filename: isProduction ? 'js/[name].[contenthash:8].js' : 'js/[name].js',
-      // `chunkFilename` follows the same pattern. The app has no
-      // dynamic imports today, so no chunk is produced; the setting
-      // is the declaration that a future dynamic import would use.
-      // Without it, webpack's default (which varies by version)
-      // would be used — a default nobody decided.
       chunkFilename: isProduction
         ? 'js/[name].[contenthash:8].js'
         : 'js/[name].js',
-      // Clean stale files before each build (prevents orphaned assets
-      // when a filename changes — a build that emits only current assets
-      // is what "required assets are present" means).
       clean: true,
-      // `publicPath` is the URL prefix for emitted assets. `/` is the
-      // correct value for an app served from the origin's root (both
-      // `localhost:8080/` in dev and a static host in prod). A future
-      // deployment under a subpath (e.g. `/mission/`) would set this
-      // to the subpath; the `HtmlWebpackPlugin`-injected `<script>`
-      // and `<link>` tags would then include the prefix automatically.
       publicPath: '/',
     },
 
     // ----------------------------------------------------------------
     // Devtool — source maps only in development.
-    // Production ships without maps: a source map reveals the source
-    // to anyone who opens DevTools, and it is a file the browser
-    // downloads for no user benefit. A future change that wants
-    // server-side error tracking generates the map but does not serve
-    // it (`devtool: 'hidden-source-map'`); the map is uploaded to the
-    // error tracker, not linked from the bundle.
+    //
+    // Production ships without maps to keep the bundle small and avoid
+    // leaking source in the deliverable. The development map is
+    // 'eval-cheap-module-source-map', which is fast to build and maps
+    // back to the original module rather than the bundled output.
     // ----------------------------------------------------------------
     devtool: isProduction ? false : 'eval-cheap-module-source-map',
 
     // ----------------------------------------------------------------
-    // Module rules — CSS and images. JavaScript is native ES2020+, so no
-    // Babel loader is configured: adding one without a transpilation
-    // need would be unnecessary complexity.
+    // Module rules — CSS and images.
+    //
+    // CSS: css-loader resolves `@import` and `url()` references;
+    // the mode-dependent injector consumes its output.
+    //
+    // Images: `asset/resource` emits each imported image as a file
+    // with a content hash. The Mars hero image is loaded from Unsplash
+    // at runtime and never enters the bundle; local images are
+    // decorative only. This rule owns every image under the source
+    // tree, so no separate copy step is needed (see the plugin list).
     // ----------------------------------------------------------------
     module: {
       rules: [
         {
           test: /\.css$/i,
-          // The injector is mode-dependent (see `cssInjector` above).
-          // The chain is `[<injector>, 'css-loader']`; `css-loader`
-          // resolves `@import` and `url()` inside the CSS in both
-          // modes.
           use: [cssInjector, 'css-loader'],
         },
         {
           test: /\.(png|jpe?g|gif|svg|webp)$/i,
           type: 'asset/resource',
           generator: {
-            // Local images only. The Mars hero image is loaded from
-            // Unsplash at runtime, so no bundler entry is needed for it.
             filename: 'assets/[name].[contenthash:8][ext]',
           },
         },
@@ -225,84 +325,79 @@ function buildConfig(env, argv) {
        * HtmlWebpackPlugin — generates ./dist/index.html from the source
        * template and injects hashed <script>/<link> tags automatically.
        *
-       * The template is `src/index.html`, which contains the root mount
-       * element (`<div id="app-root"></div>`). The `inject: 'body'`
-       * option puts the bundled script at the end of <body>, after the
-       * mount div — the only arrangement that guarantees the mount
-       * exists when the script runs. The entry code's `querySelector`
-       * for `#app-root` returns null if the script runs before the
-       * mount is parsed; the htmlEntry test asserts the contract.
+       * `templateParameters` supplies the template's `<%= themeColor %>`
+       * expression with the value read from the token register. Without
+       * it, the template's expression is a build error ("themeColor is
+       * not defined"); with it, the meta's `content` is the token's
+       * value at build time, and the tokenTraceability test keeps the
+       * template expression honest.
        *
-       * In production, the plugin also injects the extracted CSS's
-       * `<link rel="stylesheet">` into the `<head>`. The `<link>` is
-       * what makes the CSS available to the browser without an inline
-       * `<style>` (which a strict CSP would block).
+       * The template lives at `src/index.html` and contains the root
+       * mount element (`<div id="app-root"></div>`). `inject: 'body'`
+       * puts the bundled script at the end of `<body>`, after the mount
+       * div — the only arrangement that guarantees the mount exists
+       * when the script runs. The htmlEntry test asserts the contract.
        *
-       * The `title` option is deliberately omitted: the template
-       * hard-codes `<title>Mars Mission Control</title>`. If a future
-       * change wants a dynamic title, the template must include the
-       * placeholder `<%= htmlWebpackPlugin.options.title %>`, and this
-       * config must set the option. Adding the option without the
-       * placeholder is a no-op that a future reader would have to
-       * debug; omitting it is the honest configuration.
-       *
-       * The `favicon` option is deliberately omitted: the app has no
-       * favicon. A browser requests `/favicon.ico` by default and gets
-       * a 404, which is cosmetic and tolerated by the Cypress support
-       * file. A future change that wants a favicon adds a file to
-       * `src/assets/` and points this option at it.
+       * The `title` and `favicon` options are deliberately omitted:
+       * the title lives in the template (one place, not two), and there
+       * is no favicon asset in the project, so pointing the plugin at
+       * one would fail the build.
        */
       new HtmlWebpackPlugin({
         template: PATHS.htmlTemplate,
         filename: 'index.html',
         inject: 'body',
+        templateParameters: {
+          // The only design value the HTML needs, sourced from the
+          // register. If --color-bg-elevated changes, the meta changes
+          // on the next build with no further edits.
+          themeColor,
+        },
       }),
 
       /**
-       * CopyWebpackPlugin — copies anything under src/assets/ that
-       * webpack hasn't already processed (e.g. future PDFs, JSON data)
-       * into dist. The .gitkeep placeholder is ignored.
+       * CopyWebpackPlugin is deliberately not used.
        *
-       * Why this is needed: `src/assets/` is where a future contributor
-       * puts a static file that is not imported by the bundle (a
-       * favicon, a PDF, a JSON fixture for a demo). Without this
-       * plugin, the file would not reach `dist/` and would 404 when
-       * the app requested it. The plugin copies the folder; the
-       * `globOptions` ignore keeps the placeholder out of the build.
+       * Why it was removed: the plugin copied src/assets/ to
+       * dist/assets/, and the `asset/resource` rule emitted any image
+       * the bundle imported to dist/assets/[name].[hash][ext]. A file
+       * present in both cases — an image that a contributor puts in
+       * src/assets/ AND imports from CSS or JS — would be emitted
+       * twice under two names, bloating the bundle and confusing cache
+       * analysis.
+       *
+       * The split of responsibilities is:
+       *   - webpack owns everything under src/assets/ (the asset/resource
+       *     rule emits it, with a content hash, and the bundle
+       *     references it);
+       *   - files that are neither imported nor referenced (a PDF a
+       *     README links to, a JSON fixture for manual testing) do not
+       *     belong in src/assets/ — they belong in a `public/`
+       *     directory copied as-is, or outside the bundle entirely.
+       *
+       * Today, no file needs to be copied that webpack does not already
+       * handle. The `.gitkeep` placeholder remains in src/assets/ for
+       * its purpose (keeping the empty directory in version control);
+       * webpack does not touch it.
+       *
+       * A future contributor who genuinely needs "copy these files
+       * verbatim" should re-add CopyWebpackPlugin with a `public/`
+       * source directory (not `src/assets/`), so the "webpack owns
+       * assets" rule stays intact.
        */
-      new CopyWebpackPlugin({
-        patterns: [
-          {
-            from: PATHS.assets,
-            to: 'assets',
-            noErrorOnMissing: true,
-            globOptions: {
-              ignore: ['**/.gitkeep'],
-            },
-          },
-        ],
-      }),
 
       /**
-       * MiniCssExtractPlugin — extracts the CSS into a real `.css` file
-       * in production. The plugin is added only in production; its
-       * absence in development is what keeps the dev loop's CSS HMR
-       * working (an extracted file would not be HMR-updated; a change
-       * to a CSS file would require a full reload).
+       * MiniCssExtractPlugin — extracts the CSS into a separate file in
+       * production.
        *
-       * The output filename `css/[name].[contenthash:8].css` places
-       * the CSS in `dist/css/` with a content hash. A CSS-only change
-       * produces a new hash and a new filename; the browser caches the
-       * old file by its hash and fetches the new one. The JS bundle's
-       * filename is unchanged by a CSS-only change, which is the
-       * cacheability win of extracting the CSS.
+       * Added only in production: in development, CSS is injected at
+       * runtime by style-loader, and carrying the extract plugin would
+       * break CSS hot-reload. The spread of a conditional array keeps
+       * the dev and prod plugin lists in one declaration.
        *
-       * Why the plugin is not added in development:
-       *   `style-loader` is the development injector; the CSS is not
-       *   extracted, so the plugin has nothing to extract. Adding the
-       *   plugin in development would produce a `.css` file that the
-       *   `<style>`-based dev loop does not use — a confusing artefact
-       *   with no purpose.
+       * The filename carries a content hash for the same caching reason
+       * as the JS bundle: an unchanged stylesheet keeps its name, a
+       * changed one gets a new name.
        */
       ...(isProduction
         ? [
@@ -314,43 +409,27 @@ function buildConfig(env, argv) {
     ],
 
     // ----------------------------------------------------------------
-    // Dev server — `npm start`. Port 8080 matches the delivery note,
-    // the Cypress config's `baseUrl`, and the runtime baseline. A
-    // change to the port is a change to `cypress.config.js`,
-    // `docs/cypress-configuration.md`, and `docs/runtime-baseline.md`
-    // in the same commit.
+    // Dev server — `npm start`.
+    //
+    // Serves the built output from ./dist on http://localhost:8080, the
+    // address the delivery note specifies. `hot: true` enables HMR;
+    // `open` opens the browser automatically except in CI (see
+    // `openBrowser`). `historyApiFallback` serves index.html for any
+    // 404 so a SPA refresh on a deep link does not break — defensive
+    // today, because the app is single-route. The client overlay
+    // surfaces errors on the page so a runtime failure is visible the
+    // moment it happens; warnings are left in the terminal so they do
+    // not cover the UI.
     // ----------------------------------------------------------------
     devServer: {
-      // The static directory is `dist/`, because webpack-dev-server
-      // serves the *emitted* output, not the source tree. The
-      // `HtmlWebpackPlugin` emits `dist/index.html`; the
-      // `CopyWebpackPlugin` copies `src/assets/` to `dist/assets/`.
-      // A future contributor who changes this to `src/` would serve
-      // the source template (with no injected script) and the app
-      // would not boot.
       static: {
         directory: PATHS.output,
       },
       port: 8080,
       host: 'localhost',
-      // HMR is enabled. The app's modules do not call
-      // `module.hot.accept()`, so the browser falls back to a full
-      // page reload on a source change. This is the correct setting
-      // for a future change that adds HMR handlers; the current
-      // behaviour (full reload) is recorded in `docs/dev-server.md`.
       hot: true,
-      // Open the browser on `npm start` unless we are in CI. A CI
-      // machine has no display; `open: true` would fail or warn. The
-      // env-var check makes the decision visible in the config rather
-      // than in a CI script that passes `--no-open`.
       open: openBrowser,
-      // Serve index.html for any 404 so a SPA refresh on a deep link
-      // doesn't break (defensive; the app is single-route today).
       historyApiFallback: true,
-      // Surface overlay errors so a runtime error is caught the
-      // moment it happens, not on a failed assertion minutes later.
-      // Warnings are not overlaid — they are less urgent and are
-      // visible in the terminal.
       client: {
         overlay: {
           errors: true,
@@ -360,25 +439,27 @@ function buildConfig(env, argv) {
     },
 
     // ----------------------------------------------------------------
-    // Optimization — sensible production split. In development,
-    // webpack's default is fine; in production, keep one vendor chunk
-    // out of app code so caching behaves predictably if a third-party
-    // lib is ever added.
+    // Optimization.
     //
-    // `minimize` is NOT set. `mode: 'production'` enables TerserPlugin
-    // by default; the inheritance is the declaration (a future change
-    // that wants to disable minimization sets `minimize: false` and
-    // documents why). Setting `minimize: true` explicitly would be a
-    // no-op that a reader might mistake for a decision.
+    // `splitChunks` runs only in production: it pulls third-party code
+    // into a separate chunk so an app change does not invalidate the
+    // vendor cache. In development the default is fine and splitting
+    // would only slow the build.
+    //
+    // `moduleIds: 'deterministic'` gives modules stable ids across
+    // builds, which improves the long-term cache hit rate.
     // ----------------------------------------------------------------
     optimization: {
       splitChunks: isProduction ? { chunks: 'all' } : false,
-      // Deterministic module IDs improve long-term cache hit rate.
       moduleIds: 'deterministic',
     },
 
     // ----------------------------------------------------------------
-    // Resolve — allow importing without file extensions in source.
+    // Resolve.
+    //
+    // `extensions` lets source import without file extensions.
+    // The `@` alias points at the source root so imports do not depend
+    // on a file's depth in the tree.
     // ----------------------------------------------------------------
     resolve: {
       extensions: ['.js', '.json'],
@@ -388,16 +469,14 @@ function buildConfig(env, argv) {
     },
 
     // ----------------------------------------------------------------
-    // Performance hints — warn in production if a bundle grows past
-    // 300 KB. The current app is a few KB of vanilla JS; 300 KB is a
-    // generous ceiling that leaves room for a small library without
-    // being so large that a runaway bundle goes unnoticed.
+    // Performance hints.
     //
-    // The threshold is a warning, not an error: a build that grows
-    // past it still produces output, but the warning is visible in
-    // the build log. A future change that adds a large library can
-    // either keep the threshold and accept the warning, or raise the
-    // threshold with a note in the commit message.
+    // In production, warn if an asset or the entrypoint exceeds 300 KB.
+    // The thresholds are deliberately generous for a vanilla-JS SPA;
+    // crossing them means something unexpected entered the bundle, and
+    // the warning is the prompt to explain or remove it. In development
+    // the hints are off — dev builds are unminified by design and would
+    // trip the thresholds constantly.
     // ----------------------------------------------------------------
     performance: {
       hints: isProduction ? 'warning' : false,
@@ -406,14 +485,14 @@ function buildConfig(env, argv) {
     },
 
     // ----------------------------------------------------------------
-    // Stats — concise output so build evidence is legible.
+    // Stats — concise terminal output so build evidence is legible.
     // ----------------------------------------------------------------
     stats: 'minimal',
 
     // ----------------------------------------------------------------
-    // Target — modern browsers only (matches browserslist in
-    // package.json). Cypress 13 runs Chromium/Firefox/Edge, all of
-    // which support this.
+    // Target — modern browsers only (matches the project's browserslist).
+    // `web` tells webpack the output runs in a browser, which shapes the
+    // chunk-loading and runtime code it emits.
     // ----------------------------------------------------------------
     target: 'web',
   };
