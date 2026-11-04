@@ -1,0 +1,50 @@
+[
+  {
+    "name": "minimal",
+    "description": "Bare-minimum conforming task — description defaulted, all other fields supplied.",
+    "task": {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "title": "Check hull",
+      "description": "",
+      "creator": "Commander Aria Vance",
+      "assignee": "Engineer Kade",
+      "createdAt": "2026-11-03T09:00:00.000Z"
+    }
+  },
+  {
+    "name": "maximal",
+    "description": "Every field at a realistic maximum.",
+    "task": {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "title": "Survey the eastern crater for subsurface water ice",
+      "description": "Take core samples at three depths. Log moisture readings. Return samples to the lab for isotopic analysis.",
+      "creator": "Commander Aria Vance",
+      "assignee": "Geologist Soren",
+      "createdAt": "2026-11-03T09:00:00.000Z"
+    }
+  },
+  {
+    "name": "unicode",
+    "description": "Non-ASCII characters in string fields.",
+    "task": {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "title": "Échantillonner le cratère",
+      "description": "Prélever des échantillons à trois profondeurs. 火星の土壌も採取する。",
+      "creator": "Ария Вэнс",
+      "assignee": "Sören 山田",
+      "createdAt": "2026-11-03T09:00:00.000Z"
+    }
+  },
+  {
+    "name": "special-chars",
+    "description": "Punctuation, quotes, and symbols in string fields.",
+    "task": {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "title": "Q4 \"phase-2\" review — O'Neill's proposal",
+      "description": "Check: <weather>, a/b, 100% hydration; note the 1st-quarter & 3rd-quarter logs.",
+      "creator": "Commander Aria Vance",
+      "assignee": "Engineer O'Neill",
+      "createdAt": "2026-11-03T09:00:00.000Z"
+    }
+  }
+]

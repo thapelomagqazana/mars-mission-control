@@ -21,6 +21,27 @@
  *   - The store throws typed errors as documented.
  *   - Corrupted storage does not crash the application.
  *
+ * Imports — one source per symbol
+ *   This file tests three concerns: the schema, the validators, and the
+ *   store's schema-enforcing contract. Each symbol is imported from the
+ *   module that *owns* it, not from a re-export:
+ *
+ *     - The schema and its helpers — `schema.js`.
+ *     - The field validators — `validators.js`.
+ *     - `buildTask`, `applyPatch`, `createTaskStore` — `taskStore.js`
+ *       (these are the store's public operations).
+ *     - `validateTask` — `validate.js` (the content validator lives
+ *       in its own module, shared by the store and the initializer).
+ *       Importing it from `taskStore.js` would fail because the store
+ *       imports it from `validate.js` and does not re-export it.
+ *     - The error types — `errors.js`.
+ *
+ *   Importing a symbol from a module that does not export it produces
+ *   `TypeError: X is not a function` — a *linkage* error, not a
+ *   behaviour error. When a symbol moves between modules, this file's
+ *   import is the reference that must update in the same commit as
+ *   the definition.
+ *
  * What these tests deliberately do not cover:
  *   - DOM rendering (that belongs to view tests).
  *   - Persistence adapter internals (that belongs to storage tests).
@@ -60,11 +81,17 @@ import {
 } from '../../../src/js/store/validators.js';
 
 import {
-  validateTask,
   buildTask,
   applyPatch,
   createTaskStore,
 } from '../../../src/js/store/taskStore.js';
+
+// `validateTask` lives in its own module (`validate.js`), because it is
+// the *content* validator shared by the store's create/update paths and
+// the initializer's load path. It is not re-exported from `taskStore.js`
+// — the store imports it, it does not own it. The import below reads
+// the symbol from its home.
+import { validateTask } from '../../../src/js/store/validate.js';
 
 import {
   StoreError,
@@ -119,7 +146,7 @@ function memoryPersistence(initial = []) {
 }
 
 // ---------------------------------------------------------------------------
-// Schema shape (unchanged — these pass)
+// Schema shape
 // ---------------------------------------------------------------------------
 
 describe('schema contract', () => {
@@ -179,7 +206,7 @@ describe('schema contract', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Declared-absent fields (unchanged — these pass)
+// Declared-absent fields
 // ---------------------------------------------------------------------------
 
 describe('declared-absent fields', () => {
@@ -204,7 +231,7 @@ describe('declared-absent fields', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Schema helpers (unchanged — these pass)
+// Schema helpers
 // ---------------------------------------------------------------------------
 
 describe('schema helpers', () => {
@@ -239,7 +266,7 @@ describe('schema helpers', () => {
 });
 
 // ---------------------------------------------------------------------------
-// validateField (unchanged — these pass)
+// validateField
 // ---------------------------------------------------------------------------
 
 describe('validateField', () => {
@@ -294,7 +321,7 @@ describe('validateField', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Format validators (unchanged — these pass)
+// Format validators
 // ---------------------------------------------------------------------------
 
 describe('UUID v4 validator', () => {
@@ -338,7 +365,7 @@ describe('ISO 8601 validator', () => {
 });
 
 // ---------------------------------------------------------------------------
-// validateAllFields (unchanged — these pass)
+// validateAllFields
 // ---------------------------------------------------------------------------
 
 describe('validateAllFields', () => {
@@ -379,7 +406,11 @@ describe('validateAllFields', () => {
 });
 
 // ---------------------------------------------------------------------------
-// validateTask (unchanged — these pass)
+// validateTask — imported from `validate.js`
+//
+// The content validator lives in its own module because two callers
+// need it: the store's create/update paths and the initializer's load
+// path. This file imports it from its home, not from the store.
 // ---------------------------------------------------------------------------
 
 describe('validateTask', () => {
@@ -441,7 +472,7 @@ describe('validateTask', () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildTask — now throws (contract change)
+// buildTask — throws ValidationError on invalid input
 // ---------------------------------------------------------------------------
 
 describe('buildTask', () => {
@@ -511,7 +542,7 @@ describe('buildTask', () => {
 });
 
 // ---------------------------------------------------------------------------
-// applyPatch — now throws (contract change)
+// applyPatch — throws ValidationError on invalid patches
 // ---------------------------------------------------------------------------
 
 describe('applyPatch', () => {
@@ -559,7 +590,7 @@ describe('applyPatch', () => {
 });
 
 // ---------------------------------------------------------------------------
-// createTaskStore — new method names and throwing model (contract change)
+// createTaskStore — the schema enforcement on untrusted input
 // ---------------------------------------------------------------------------
 
 describe('createTaskStore', () => {
@@ -662,6 +693,9 @@ describe('createTaskStore', () => {
   });
 
   it('filters corrupted entries on load instead of crashing', () => {
+    // The initializer uses the *content* validator (validateTask),
+    // not the shape checker — a record whose `id` is not a UUID is
+    // dropped here even though it has the right *shape*.
     const store = createTaskStore(memoryPersistence([
       { id: 'not-a-uuid', title: '' },
       { valid: 'no' },
@@ -721,7 +755,7 @@ describe('createTaskStore', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Error taxonomy (new — asserts the contract card promises)
+// Error taxonomy — asserts the contract card promises
 // ---------------------------------------------------------------------------
 
 describe('error taxonomy', () => {
@@ -749,7 +783,7 @@ describe('error taxonomy', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Validator helpers (unchanged — these pass)
+// Validator helpers
 // ---------------------------------------------------------------------------
 
 describe('isMeaningfulText', () => {

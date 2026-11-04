@@ -301,12 +301,9 @@ export function renderDashboard(state) {
          *   docstring.
          */
         el('div', {
-          class: 'dashboard__list-slot',
-        }, [
-          // Filled by renderSearchResults (which composes renderTaskList).
-          // Empty in the shell (renderDashboard) by design: the task-area
-          // container is a child view's output, not the dashboard's.
-        ]),
+            class: 'dashboard__list-slot',
+            dataset: { listener: 'task-actions' },
+        }, [])
       ]),
     ]),
   ]);

@@ -2,39 +2,102 @@
  * Task schema — the single source of truth for the shape of a task.
  *
  * Why this file exists:
- *   Validation, serialisation, and form rendering all need to agree on
- *   which fields a task has, what type each field is, and what limits
- *   apply. When those rules live in three places, they drift. Here they
- *   live in one place, and everything else derives from them.
+ *   Five modules need to agree on "what is a task":
+ *
+ *     - The factory (taskFactory.js) — which fields to emit, at what
+ *       type, in what order, and which defaults to fill.
+ *     - The conformance checker (conformance.js) — which fields must
+ *       be present, at what type, and which are forbidden.
+ *     - The validators (validators.js) — per-field content rules
+ *       (length, format, trim) applied to supplied values.
+ *     - The store (taskStore.js) — which fields a caller may supply,
+ *       which the store generates, and which are rejected outright.
+ *     - The dialog (views/dialog.js) — which fields to render as
+ *       user-facing inputs.
+ *
+ *   When those rules live in more than one place, they drift. Here
+ *   they live in one file, and every consumer reads it.
+ *
+ * The schema's two facets
+ *   Each field's spec answers two questions about the same field:
+ *
+ *     Shape — "Is this field present on a task, at what type, and
+ *              with what default?"
+ *       Keys: `type`, `required`, `default` (if applicable), `auto`.
+ *       Readers: the factory (which emits fields, fills defaults),
+ *                the conformance checker (which verifies presence and
+ *                type).
+ *
+ *     Content — "When this field is supplied, is the value acceptable?"
+ *       Keys: `minLength`, `maxLength`, `format`, `trim`,
+ *             `description`.
+ *       Readers: the validators (validateField, validateString,
+ *                format validators).
+ *
+ *   A factory reads only the shape keys; a validator reads only the
+ *   content keys. Neither accidentally applies the other's rules, and
+ *   both agree on the same field because both read the same file.
+ *
+ * `required` means "the user must supply this field"
+ *   `required: true` is a *user-input* contract: the create/edit form
+ *   will reject a submission that omits the field, and the validator
+ *   will report it missing on a *whole task* check (see
+ *   `validateTask` in taskStore.js, which is called on the factory's
+ *   output — a task the *user* did not have a chance to supply a
+ *   different value for).
+ *
+ *   A field with `required: false` may be omitted from the user's
+ *   input. If it also has a `default`, the factory fills that value
+ *   so a factory-produced task *is* present at that field — the user
+ *   did not have to supply it, and the factory did.
+ *
+ * `default` means "the factory supplies this value if the user did
+ * not"
+ *   `default` is a *factory-output* contract: when the field is
+ *   absent from the factory's inputs, the factory fills the default
+ *   so the output always has the field. This is how an optional field
+ *   becomes always-present on a factory-produced task — without
+ *   requiring the user to supply it.
+ *
+ *   A field with `required: true` has no default — the user must
+ *   supply it, so there is nothing for the factory to fill in.
  *
  * What this file is:
  *   - Data, not logic. It declares field specifications. It does not
  *     validate values, touch the DOM, or read from storage.
- *   - Frozen. Every export is immutable, so a caller cannot rewrite the
- *     schema at runtime by importing and mutating it.
- *   - The only place where a field name is written as a literal string.
- *     Every other module reads `FIELDS` or `FIELD_NAMES`.
+ *   - Frozen. Every export is immutable, so a caller cannot rewrite
+ *     the schema at runtime by importing and mutating it.
+ *   - The only place where a field name is written as a literal
+ *     string. Every other module reads `FIELDS`, `FIELD_NAMES`, or
+ *     the helper functions below.
  *
  * What this file is not:
- *   - Not the validator. See `validators.js` for per-field rules.
- *   - Not the store. See `taskStore.js` for create/update/delete.
- *   - Not the persistence layer. See `utils/storage.js` for the adapter.
+ *   - Not the factory. See `taskFactory.js` for `createTaskRecord`.
+ *   - Not the conformance checker. See `conformance.js` for
+ *     `conformsToSchema`.
+ *   - Not the validator. See `validators.js` for per-field content
+ *     rules.
+ *   - Not the store. See `taskStore.js` for create / update / delete.
  *
  * How to extend it:
- *   1. Add a field definition to `FIELDS`.
- *   2. If the field is user-supplied, it is picked up by `USER_FIELDS`
- *      automatically. No other code change is required for it to be
- *      validated and rendered.
+ *   1. Add a field definition to `FIELDS` with its shape keys
+ *      (`type`, `required`, `auto` if generated by the store, `default`
+ *      if the factory should fill it) and its content keys
+ *      (`minLength`, `maxLength`, `format`, `trim`, `description`).
+ *   2. If the field is user-supplied (i.e. not `auto`), it is picked
+ *      up by `USER_FIELDS` automatically. No other code change is
+ *      required for it to be validated and rendered.
  *   3. If the field must never appear, add it to `FORBIDDEN_FIELDS`.
- *   4. Update `docs/schema.md` to keep the human-readable record in
- *      step with the code. The contract test asserts the field list, so
+ *   4. Update `docs/task-schema.md` (and `docs/schema.md` if both
+ *      exist in your tree) to keep the human-readable record in step
+ *      with the code. The contract test asserts the field list, so
  *      forgetting this step fails CI.
  *
  * How to remove a field:
  *   1. Remove it from `FIELDS`.
  *   2. Add it to `FORBIDDEN_FIELDS` so existing tasks carrying it are
  *      rejected at validation time, not silently accepted.
- *   3. Add a migration note in `docs/schema.md`.
+ *   3. Add a migration note in `docs/task-schema.md`.
  *
  * @module store/schema
  */
@@ -45,6 +108,7 @@
  * Each entry declares everything needed to:
  *   - render the field's input (required, maxLength, description),
  *   - validate its value (type, required, minLength, maxLength, format),
+ *   - construct a well-shaped record (type, required, default),
  *   - serialise it (type is a JSON primitive: string, number, boolean).
  *
  * The `auto` flag marks fields the store generates itself. Auto fields
@@ -53,6 +117,11 @@
  * The `format` field names a validator registered in `validators.js`.
  * A format that has no registered validator is ignored at validation
  * time; it is documentation for the reader, not an enforcement.
+ *
+ * The `default` field names the value the factory fills in when the
+ * field is absent from its inputs. Only fields with `required: false`
+ * and a `default` are filled; a `required: true` field has no default
+ * (the user must supply it).
  *
  * Field-level notes live in `description` rather than a separate doc,
  * so the reasoning travels with the field and cannot be lost when this
@@ -64,12 +133,14 @@ export const FIELDS = Object.freeze({
   /**
    * Stable identity for edit and delete.
    *
+   * Shape: string, required, auto (the store generates it). No default
+   * (the store generates it at the point of creation).
+   * Content: UUID v4 format.
+   *
    * Generated by the store using `crypto.randomUUID()` when available,
    * with an RFC 4122 v4 fallback. Never accepted from user input — see
    * `buildTask` and `applyPatch` in `taskStore.js`, which overwrite any
    * caller-supplied `id` with the generated or existing value.
-   *
-   * Format: UUID v4 (36 characters including hyphens).
    */
   id: Object.freeze({
     type: 'string',
@@ -82,6 +153,9 @@ export const FIELDS = Object.freeze({
 
   /**
    * Short name shown on the task card.
+   *
+   * Shape: string, required (the user must supply it). No default.
+   * Content: trimmed; 1..120 characters.
    *
    * Required. Trimmed before validation, so "   " is rejected as if it
    * were empty. Bounded to 120 characters to keep the card layout
@@ -99,10 +173,34 @@ export const FIELDS = Object.freeze({
   /**
    * Long-form details.
    *
-   * Optional. Defaults to empty string, not `undefined`, so the view
-   * layer never has to null-check before rendering. Bounded to 2000
-   * characters — long enough for a useful description, short enough
-   * that the whole task list stays well within localStorage quota.
+   * Shape: string, optional (the user may omit it), default ''. The
+   * factory fills the empty string when the field is absent from its
+   * inputs, so a factory-produced task always has a `description` —
+   * at the user's value, or at the empty string.
+   * Content: trimmed; 0..2000 characters. Empty is valid; the field
+   * is optional, and "no description" is a valid absence.
+   *
+   * `required: false` means the user may leave this field out of the
+   * create/edit form. `default: ''` means the factory fills the
+   * empty string when the user does. The two keys together give the
+   * behaviour the schema wants:
+   *
+   *   - The user submits without a description → the factory fills
+   *     '' → the validator accepts the empty string (minLength: 0).
+   *   - The user submits with a description → the factory preserves
+   *     it → the validator accepts it (0..2000 after trim).
+   *
+   * A future change that wanted `description` to be *user-required*
+   * (e.g. "every task must explain itself") would:
+   *   1. flip `required` to `true`,
+   *   2. remove the `default`,
+   *   3. update the form to require the field.
+   * That is a *content* change (the user must supply the field), and
+   * the schema expresses it with `required: true` and no default.
+   *
+   * Bounded to 2000 characters — long enough for a useful
+   * description, short enough that the whole task list stays well
+   * within localStorage quota.
    */
   description: Object.freeze({
     type: 'string',
@@ -110,15 +208,18 @@ export const FIELDS = Object.freeze({
     minLength: 0,
     maxLength: 2000,
     trim: true,
-    defaultValue: '',
+    default: '',
     description: 'Long-form details; may be empty',
   }),
 
   /**
    * Name of the person who created the task.
    *
-   * Required. Trimmed. Bounded to 80 characters — long enough for a
-   * full name, short enough to fit on a card line without truncation.
+   * Shape: string, required (the user must supply it). No default.
+   * Content: trimmed; 1..80 characters.
+   *
+   * Bounded to 80 characters — long enough for a full name, short
+   * enough to fit on a card line without truncation.
    */
   creator: Object.freeze({
     type: 'string',
@@ -132,7 +233,8 @@ export const FIELDS = Object.freeze({
   /**
    * Name of the person responsible for the task.
    *
-   * Required. Same rules as `creator`.
+   * Shape: string, required (the user must supply it). No default.
+   * Content: trimmed; 1..80 characters. Same rules as `creator`.
    */
   assignee: Object.freeze({
     type: 'string',
@@ -146,12 +248,15 @@ export const FIELDS = Object.freeze({
   /**
    * Creation timestamp.
    *
+   * Shape: string, required, auto (the store generates it). No default.
+   * Content: ISO 8601 format (UTC, with milliseconds).
+   *
    * Generated by the store as an ISO 8601 string with milliseconds and
    * a `Z` suffix. Used for stable ordering; the view sorts by this
    * field rather than relying on array insertion order.
    *
-   * Never accepted from user input. `applyPatch` preserves the existing
-   * value even if a caller tries to change it.
+   * Never accepted from user input. `applyPatch` preserves the
+   * existing value even if a caller tries to change it.
    */
   createdAt: Object.freeze({
     type: 'string',
@@ -167,13 +272,16 @@ export const FIELDS = Object.freeze({
  * The list of field names, in display order.
  *
  * Derived from `FIELDS` so there is no second list to keep in sync.
- * This is the list the form renderer iterates and the list the
- * validator iterates.
+ * This is the list the form renderer iterates, the list the validator
+ * iterates, and the list the factory emits keys in.
  *
  * Display order is the insertion order of `FIELDS`: id (auto, hidden),
  * title, description, creator, assignee, createdAt (auto, hidden).
  * The renderer filters out auto fields, so the visible order is
  * title, description, creator, assignee.
+ *
+ * The factory's output respects this order (it emits keys in this
+ * order), which makes JSON.stringify deterministic and diffs stable.
  *
  * @type {ReadonlyArray<string>}
  */
@@ -195,10 +303,10 @@ export const USER_FIELDS = Object.freeze(
 /**
  * Fields the store generates itself.
  *
- * These are never accepted from user input. If a caller passes them in,
- * the store overwrites them — see `buildTask` and `applyPatch` in
- * `taskStore.js`. This is the security boundary between "user data" and
- * "system data".
+ * These are never accepted from user input. If a caller passes them
+ * in, the store overwrites them — see `buildTask` and `applyPatch` in
+ * `taskStore.js`. This is the security boundary between "user data"
+ * and "system data".
  *
  * @type {ReadonlyArray<string>}
  */
@@ -209,15 +317,17 @@ export const AUTO_FIELDS = Object.freeze(
 /**
  * Fields that must never appear on a task object.
  *
- * This is the machine-readable form of the "declared absent" section in
- * `docs/schema.md`. When the store validates a task, any of these
- * fields is rejected. This is the contract that prevents a future
- * contributor from silently leaking a field into stored data before
- * anyone has decided whether it belongs in the schema.
+ * This is the machine-readable form of the "declared absent" section
+ * in `docs/task-schema.md` (and `docs/schema.md` if both exist in your
+ * tree). When the store validates a task, any of these fields is
+ * rejected. This is the contract that prevents a future contributor
+ * from silently leaking a field into stored data before anyone has
+ * decided whether it belongs in the schema.
  *
  * Why a list of forbidden names, not just "reject unknown fields":
  *   The unknown-field check already rejects these. But listing them
  *   explicitly does three things the generic check cannot:
+ *
  *     1. It documents the decision. A reader sees "status" here and
  *        knows it was considered and rejected, not overlooked.
  *     2. It produces a specific error message. "Field status is not
@@ -229,7 +339,7 @@ export const AUTO_FIELDS = Object.freeze(
  *
  * Adding a field to this list is a one-line change. Removing a field
  * from this list is a schema change that must follow the protocol in
- * `docs/schema.md`.
+ * `docs/task-schema.md`.
  *
  * @type {ReadonlyArray<string>}
  */
@@ -300,3 +410,33 @@ export function isUserField(name) {
 export function isAutoField(name) {
   return AUTO_FIELDS.includes(name);
 }
+
+/**
+ * The schema's shape facet — the field list and spec that the factory
+ * and conformance checker read.
+ *
+ * These two exports are aliases for the values the schema already
+ * declares: `FIELDS` is the per-field spec, and `FIELD_NAMES` is the
+ * ordered list of field names. The aliases exist so a consumer that
+ * thinks in "the schema's shape" (the factory, the checker) can read
+ * a name that says so, without the store and validators (which read
+ * `FIELDS` / `FIELD_NAMES` for their own purposes) renaming their
+ * imports.
+ *
+ * Adding a field to `FIELDS` and `FIELD_NAMES` is the one change that
+ * keeps all five consumers — store, validators, factory, checker,
+ * dialog — in agreement. The aliases are not a second source of
+ * truth; they are the same values under a name that names the facet
+ * they serve.
+ *
+ * @type {Readonly<Record<string, Readonly<object>>>}
+ */
+export const SCHEMA_FIELDS = FIELDS;
+
+/**
+ * The schema's field names, in schema order. Alias of `FIELD_NAMES`,
+ * see `SCHEMA_FIELDS` above for the reasoning.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const SCHEMA_FIELD_NAMES = FIELD_NAMES;

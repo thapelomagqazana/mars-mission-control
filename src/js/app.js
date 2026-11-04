@@ -267,7 +267,7 @@ export function startApp(options = {}) {
     // handler to the view's DOM shape; if the view later moved the
     // attribute to the card, every handler would silently stop
     // matching.
-    const content = root.querySelector('[data-region="content"]');
+    const content = root.querySelector('[data-listener="task-actions"]');
     if (content) {
       const onClick = (event) => {
         const actionEl = event.target.closest('[data-action]');

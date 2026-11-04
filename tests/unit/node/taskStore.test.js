@@ -436,6 +436,32 @@ describe('update', () => {
     expect(store.getById(created.id).title).toBe('Original');
     expect(persistence._saved()[0].title).toBe('Original');
   });
+
+  it('preserves the task id across updates (ID is stable for the record)', () => {
+    const store = createTaskStore(memoryPersistence());
+    const created = store.create({
+      title: 'Original title',
+      creator: 'Commander Aria Vance',
+      assignee: 'Engineer Kade',
+    });
+
+    const updated = store.update(created.id, {
+      title: 'Updated title',
+      description: 'A new description',
+    });
+
+    // Same ID.
+    expect(updated.id).toBe(created.id);
+
+    // The update was applied (the title changed).
+    expect(updated.title).toBe('Updated title');
+    expect(updated.description).toBe('A new description');
+
+    // The stored task also has the same ID.
+    const stored = store.getById(created.id);
+    expect(stored).not.toBeUndefined();
+    expect(stored.id).toBe(created.id);
+  });
 });
 
 // ---------------------------------------------------------------------------

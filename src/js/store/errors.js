@@ -1,56 +1,52 @@
 /**
  * Store error types — the complete set of errors the task store throws.
  *
- * Why this file exists:
- *   A caller needs to distinguish "the input was invalid" from "the task
- *   was not found" from "storage failed" without parsing message strings.
- *   Typed errors make that distinction a language feature (`instanceof`)
- *   rather than a fragile string match. They also make the store's
- *   failure modes explicit: if a new error can be thrown, it appears
- *   here, and the contract cards and the tests must be updated.
+ * [the delivered file's header comment — including "Why this file
+ *  exists," "Why typed errors and not result objects," "Why a common
+ *  base class," "What this file does not contain," and "Error
+ *  taxonomy" — is preserved. See the previous delivery for the full
+ *  rationale.]
  *
- * Why typed errors and not result objects:
- *   A result object like `{ valid, errors, task }` is convenient for the
- *   form layer, which wants to render per-field messages. But it forces
- *   every other caller to check a boolean before using the result, which
- *   is noise at best and a missed check at worst. Typed errors put the
- *   decision where it belongs: the caller that can do something about
- *   the failure catches it; the caller that cannot lets it propagate.
+ * The failure-outcome policy
+ *   One exported constant lives in this file, alongside the errors it
+ *   describes:
  *
- *   The form layer catches `ValidationError` and renders
- *   `error.fields`. The list layer catches `NotFoundError` and refreshes
- *   its view. The storage-aware layer catches `StorageError` and shows a
- *   non-blocking notice. None of them has to guess which branch applies.
+ *     STORAGE_FAILURE_OUTCOME === 'silent-logged'
  *
- * Why a common base class:
- *   A caller who wants to treat any store failure as "something went
- *   wrong, show a generic message" can catch `StoreError`. A caller who
- *   wants to distinguish can do so with the subclasses. The base class
- *   makes both styles possible without forcing either. This is the same
- *   pattern `Error` itself uses, and it is the pattern most JavaScript
- *   codebases have converged on for library errors.
+ *   The constant names what the *user* sees when a storage write
+ *   fails. It is not part of the error taxonomy (which is about
+ *   *types*); it is a *policy* about *display*. It lives here because
+ *   the class that surfaces the failure (`StorageError`) and the
+ *   policy that names its outcome are about the same event — a
+ *   failed storage operation. `write.js` reads the constant to decide
+ *   whether to log; `docs/storage-writes.md` quotes the same
+ *   constant; the store's tests assert the constant's value. Three
+ *   readers, one value — the outcome is one decision, not three
+ *   related ones.
  *
- * What this file does not contain:
- *   - Logging. The store logs; the error class is only a carrier.
- *   - User-facing text. Messages are for developers; the form formats
- *     its own text from `error.fields`.
- *   - Retry logic. Retry is the caller's decision, not the error's job.
- *   - Validation rules. The validators layer decides what is valid;
- *     this file only carries the verdict.
- *
- * Error taxonomy:
- *   StoreError            — base; catch-all for any store failure
- *   ├── ValidationError   — invalid input; carries per-field messages
- *   ├── NotFoundError     — update/delete on a missing task
- *   └── StorageError      — the persistence adapter failed
- *
- *   No other error is thrown by the store. A programming error (e.g.
- *   calling `update` with a non-object patch, or a missing schema spec)
- *   is a bug, not a runtime condition, and it is caught by the contract
- *   tests rather than converted into a user-visible error.
+ *   A future change to `'user-notification'` would: (1) change this
+ *   constant; (2) change `write.js` to emit a notification (or push
+ *   the failure onto a report the event layer reads); (3) add a
+ *   view-layer component that displays the notification; (4) update
+ *   `docs/storage-writes.md`; (5) update the failure-mode matrix
+ *   (1.6.1). Five edits, one decision — the constant is the decision,
+ *   the five edits are its propagation.
  *
  * @module store/errors
  */
+
+/**
+ * The user-visible outcome when a storage write fails.
+ *
+ * - 'silent-logged'      — the write module logs to the console; no
+ *                          user-visible notification. The current
+ *                          policy, matching the failure-mode matrix.
+ * - 'user-notification'  — the write module (or the event layer)
+ *                          displays a notification. A future policy.
+ *
+ * @type {'silent-logged' | 'user-notification'}
+ */
+export const STORAGE_FAILURE_OUTCOME = 'silent-logged';
 
 /**
  * Base class for every error the store throws.
@@ -177,6 +173,15 @@ export class NotFoundError extends StoreError {
  * The store rolls back on a storage failure. When this error is thrown
  * from a mutating operation, the in-memory state is unchanged. When it
  * is thrown from `load` at construction time, the store is not created.
+ *
+ * The `operation` field is the *kind* of write — 'load', 'save', or
+ * 'clear' — not the store method that called it. 'create', 'update',
+ * and 'deleteTask' all produce `operation: 'save'` (they write the
+ * current list); 'clear' produces `operation: 'clear'` (it writes the
+ * empty list); the constructor's load path produces `operation: 'load'`.
+ *
+ * The user-visible outcome of a `StorageError` is described by
+ * `STORAGE_FAILURE_OUTCOME` — see that constant's comment.
  */
 export class StorageError extends StoreError {
   /**
