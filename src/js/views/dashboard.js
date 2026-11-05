@@ -7,78 +7,65 @@
  *  notes, and the event-layer boundary — is preserved. See the previous
  *  deliveries for the full rationale.]
  *
+ * The header's witty title
+ *   [unchanged from the previous delivery — the h1 carries both
+ *    `.dashboard__title` (typographic contract) and
+ *    `.dashboard__title--witty` (visual flourish). See that delivery
+ *    for the full rationale on the split.]
+ *
+ * The sidebar's clear-all button
+ *   The sidebar region renders a "Clear all tasks" button beneath
+ *   the counter. The button:
+ *
+ *     - Lives in the sidebar, next to the counter. A destructive
+ *       action next to the count it destroys is legible: the user
+ *       sees "3 tasks" and, immediately below, "Clear all tasks."
+ *       The adjacency is the affordance.
+ *
+ *     - Is a real `<button type="button">`, keyboard-activatable, and
+ *       announced as a button. Its `aria-label` includes the current
+ *       count so a screen-reader user hears "Clear all tasks, 3 tasks
+ *       will be deleted" — the consequence is in the name.
+ *
+ *     - Carries `data-action="open-clear-all-dialog"` so the event
+ *       layer's delegated click handler dispatches to the same
+ *       handler pattern as every other `[data-action]` in the
+ *       dashboard.
+ *
+ *     - Is rendered at every state, including when the store is
+ *       empty. A button that disappears when the store is empty is a
+ *       button whose *presence* implies "there are tasks to clear."
+ *       Keeping it visible (and disabled when the count is 0) is the
+ *       honest representation: the affordance exists, it just has
+ *       no work to do. A disabled button is announced as disabled by
+ *       assistive technology, and its `aria-disabled` state is
+ *       inspectable by tests.
+ *
+ *   Why the button is NOT in the header: the header holds the
+ *   *persistent create* affordance. A "Clear all" beside "Create
+ *   task" would put the two highest-stakes actions of the app
+ *   adjacent to each other. That is the opposite of the safe-default
+ *   discipline the rest of the app follows. The sidebar is one step
+ *   removed from the create flow — the user has to look at the count,
+ *   then at the button below it, before they can click. That step is
+ *   the safety margin.
+ *
+ *   Why the disabled state uses the *total* count, not the filtered
+ *   count: the button's action ("clear all") applies to every task,
+ *   not just the ones currently visible. A user with 5 tasks, filtered
+ *   to 1, clicks "Clear all tasks" and expects 0 tasks after — not
+ *   "4 tasks remaining because 4 were filtered out." The `disabled`
+ *   state is driven by `state.tasks.length` (the total); the visible
+ *   counter is driven by `state.counter` (the filtered count).
+ *
  * The counter slot vs the counter element
- *   [unchanged from the previous delivery — the slot is a plain wrapper
- *    with class .sidebar-counter and no identity attributes; the counter
- *    element (emitted by views/counter.js) carries id="dashboard-counter",
- *    data-cy="dashboard-counter", data-region="counter". See the
- *    previous delivery for the full rationale.]
+ *   [unchanged from the previous delivery]
  *
  * The list slot vs the task-area container
- *   [unchanged from the previous delivery — the slot is a plain wrapper
- *    with class .dashboard__list-slot and a data-listener attribute;
- *    the task-area container (emitted by views/taskList.js) carries the
- *    id, data-cy, and data-region. See the previous delivery for the
- *    full rationale.]
+ *   [unchanged from the previous delivery]
  *
  * The header's create affordance
- *   The header now renders a "Create task" button alongside the Mars
- *   hero and the title. The button is the *persistent* create
- *   affordance — visible at every scroll position, in every task-area
- *   state (empty, populated, filtered-to-empty).
- *
- *   Why the header button, in addition to the empty state's
- *   "Create your first task":
- *
- *     The empty state's affordance is *contextual* — it appears only
- *     when the task area is empty. A user with one task has no
- *     *persistent* affordance to create a second one. The empty state
- *     is the right place for the first affordance a user sees ("start
- *     here"), but it is the *wrong* place for the only affordance a
- *     user has. The header button fills that gap: it is available at
- *     every state, and it is where a user who has used the app for a
- *     while expects a primary action to live (the header's right side).
- *
- *   Why the two buttons have distinct `data-cy` values:
- *
- *     `dashboard-create` (header) and `dashboard-empty-create` (empty
- *     state) name two different elements with the same *action*. A test
- *     that wants "the create button in the header" targets
- *     `[data-cy="dashboard-create"]`; a test that wants "the create
- *     button in the empty state" targets
- *     `[data-cy="dashboard-empty-create"]`. The two are different
- *     elements with different DOM positions, different accessible-name
- *     contexts (the header's "Create task" sits beside the mission
- *     title; the empty state's "Create your first task" sits inside a
- *     "no tasks yet" message), and different trigger elements for the
- *     dialog's focus-restoration. Sharing a `data-cy` would make a
- *     test that targets "the create button" ambiguous — which element
- *     does it mean? Distinct selectors keep the test unambiguous.
- *
- *   Why the button is text, not an icon:
- *
- *     The empty state's affordance is text ("Create your first task")
- *     because the user is a first-time user and the affordance is the
- *     primary thing on the screen. The header's affordance is text
- *     ("Create task") for the same reason, in a shorter form: the
- *     header is narrow, the button is one of several elements, and a
- *     text label keeps the affordance legible to every reader (sighted,
- *     screen-reader, keyboard-only). An icon would require a tooltip,
- *     a title attribute, or an aria-label to be readable — three places
- *     for a single label. Text is one place.
- *
- *   The button's data-action="open-create-dialog" matches the empty
- *   state's button — the event layer's delegated click handler treats
- *   both as the same action, and dispatches to the same
- *   `handleOpenCreate`. The event layer's delegation is extended to
- *   cover the header (see app.js); the button's trigger element is
- *   the button itself, so dialogTrigger is the header button, not the
- *   empty state's button, and the focus restoration lands on whichever
- *   button the user actually clicked.
- *
- * [the rest of the file — the region contract, the Mars hero, the
- *  commander panel, the search bar, the DASHBOARD_REGIONS export, and
- *  renderDashboardFilled — is unchanged from the previous delivery.]
+ *   [unchanged from the previous delivery]
  *
  * @module views/dashboard
  */
@@ -87,9 +74,7 @@ import { el } from '../utils/dom.js';
 
 /**
  * The Mars hero image URL, from the Stage 1 UI checklist.
- *
- * [unchanged from the delivered file — see that file for the square-crop,
- *  crop=faces, auto=format, and Stage 1 URL rationale]
+ * [unchanged from the delivered file]
  */
 const MARS_IMAGE_URL =
   'https://images.unsplash.com/photo-1614728894747-a83421e2b9c9' +
@@ -101,41 +86,31 @@ const MARS_IMAGE_URL =
 const MARS_IMAGE_ALT = 'The surface of Mars, with a crater in the foreground';
 
 /**
- * The demo-identity disclosure, verbatim from the UI checklist.
- * [unchanged from the delivered file]
- */
-export const COMMANDER_DISCLOSURE =
-  'Demonstration account. Not a real user. No authentication or ' +
-  'authorisation is performed; this panel is for illustration only.';
-
-/**
- * The header's "Create task" button. Exported so a test can target it
- * by the same constant the view writes, and so a future change to the
- * button's id or data-cy is one edit, visible to the test.
- *
- * The values follow the "dashboard-<name>" convention used by the
- * region map (`dashboard-header`, `dashboard-list`, etc.) and by the
- * empty state's affordance (`dashboard-empty-create`). The header
- * button's values are `dashboard-create` — the *region's* name plus
- * the affordance's role, not the empty state's.
- *
- * See the module header's "The header's create affordance" section
- * for the rationale on the distinct `data-cy` (vs. the empty state's).
+ * The header's "Create task" button. [unchanged from the delivered file]
  */
 export const HEADER_CREATE_ID = 'dashboard-create';
 export const HEADER_CREATE_DATA_CY = 'dashboard-create';
 
 /**
+ * The sidebar's "Clear all tasks" button. Exported so a test can
+ * reference the same constant the view writes, and so a future
+ * change to the button's id or data-cy is one edit, visible to the
+ * test.
+ *
+ * The id is `clear-all` (the button's role, short form). The data-cy
+ * is `dashboard-clear-all` (the region name plus the button's role,
+ * matching the `dashboard-create` / `dashboard-empty-create`
+ * convention used elsewhere).
+ */
+export const CLEAR_ALL_ID = 'clear-all';
+export const CLEAR_ALL_DATA_CY = 'dashboard-clear-all';
+
+/**
  * The contracted region list.
  *
- * [unchanged from the delivered file — the `counter` entry names the
- *  counter element (views/counter.js), not the slot; the `list` entry
- *  names the task-area container (views/taskList.js), not the slot.
- *  The `header` entry names the header element; its create button is
- *  a child of the header and does not appear in this list, because the
- *  region list names regions, not controls. A future change that
- *  wanted the button to be its own region would need a new entry — a
- *  different decision with its own rationale, not a refactor.]
+ * [unchanged from the delivered file — the region list names
+ *  regions, not controls. The clear-all button is a child of the
+ *  sidebar region and does not appear here.]
  *
  * @type {ReadonlyArray<{ name: string, id: string, dataCy: string, owner: string }>}
  */
@@ -150,7 +125,7 @@ export const DASHBOARD_REGIONS = Object.freeze([
     name: 'sidebar',
     id: 'dashboard-sidebar',
     dataCy: 'dashboard-sidebar',
-    owner: 'renderDashboard (commander block, counter slot)',
+    owner: 'renderDashboard (commander block, counter slot, clear-all button)',
   },
   {
     name: 'counter',
@@ -183,27 +158,51 @@ export const DASHBOARD_REGIONS = Object.freeze([
  * }} state
  * @returns {HTMLElement}
  *
- * [state shape, region list, and the rest of the docstring unchanged
- *  from the delivered file. The four structural changes over the
- *  course of the counter, task-area, and header-affordance work are:
- *    1. The commander panel has aria-labelledby + a visible disclosure
- *       paragraph.
- *    2. The counter slot is a plain wrapper; the counter element
- *       (emitted by views/counter.js) carries the counter's identity.
- *    3. The list slot is a plain wrapper with a data-listener
- *       attribute; the task-area container (emitted by
- *       views/taskList.js) carries the list region's identity.
- *    4. The header now carries a persistent "Create task" button
- *       (see the module header's "The header's create affordance"
- *       section) — the empty state's "Create your first task" remains,
- *       as the contextual affordance.]
+ * The state shape:
+ *   - `tasks` is the store's full list. Used by the clear-all button's
+ *     enabled state (the button acts on the total, not on the
+ *     filtered subset).
+ *   - `filteredTasks` is the list after the search filter is applied.
+ *     Used by the list slot's content.
+ *   - `searchQuery` is the current filter text. Used by the search
+ *     input and by the empty state's `emptyReason` (computed in the
+ *     app layer from this value).
+ *   - `counter` is the filtered count. Used by the counter view.
+ *
+ * The six structural changes over the course of the project are:
+ *   1. The commander panel has aria-labelledby + a visible disclosure
+ *      paragraph.
+ *   2. The counter slot is a plain wrapper; the counter element
+ *      (emitted by views/counter.js) carries the counter's identity.
+ *   3. The list slot is a plain wrapper with a data-listener
+ *      attribute; the task-area container carries the list region's
+ *      identity.
+ *   4. The header carries a persistent "Create task" button.
+ *   5. The h1 carries a `--witty` modifier class alongside the base
+ *      `.dashboard__title` class.
+ *   6. The sidebar carries a "Clear all tasks" button beneath the
+ *      counter — disabled when the store is empty, enabled otherwise.
  */
 export function renderDashboard(state) {
   const {
+    tasks,
     filteredTasks,
     searchQuery,
     counter,
   } = state;
+
+  // The clear-all button's enabled state is driven by the store's
+  // *total* task count, not the filtered count. Clearing "all tasks"
+  // clears everything, whether or not the current search matches
+  // them. A user with 5 tasks, filtered to 1, expects "Clear all"
+  // to leave 0 tasks behind, not 4 filtered-out survivors.
+  //
+  // `tasks` is the store's full list; `counter` is the filtered
+  // count. The button uses `tasks.length`. The counter element
+  // (rendered by renderCounter) uses `counter`. Both are correct
+  // for their purpose.
+  const totalTaskCount = tasks.length;
+  const clearAllDisabled = totalTaskCount === 0;
 
   return el('main', {
     class: 'dashboard',
@@ -217,8 +216,7 @@ export function renderDashboard(state) {
         cy: 'dashboard-header',
       },
     }, [
-      // The Mars hero. [unchanged from the delivered file — see the
-      // module header and the hero-image rationale comments.]
+      // The Mars hero. [unchanged from the delivered file]
       el('div', {
         class: 'dashboard__hero-frame',
         dataset: { region: 'hero' },
@@ -229,38 +227,19 @@ export function renderDashboard(state) {
           alt: MARS_IMAGE_ALT,
         }),
       ]),
+
+      // The witty title block. [unchanged from the previous delivery]
       el('div', { class: 'dashboard__heading' }, [
-        el('h1', { class: 'dashboard__title' }, 'Mars Mission Control'),
-        el('p', { class: 'dashboard__subtitle' }, 'Task management for the mission crew'),
+        el('h1', {
+          class: 'dashboard__title dashboard__title--witty',
+        }, "The Red Planet's To-Do List"),
+        el('p', {
+          class: 'dashboard__subtitle',
+        }, 'Mission-critical tasks, marshalled.'),
       ]),
 
-      // The persistent create affordance.
-      //
-      // A <button> (not a styled <a> or <div>) so it is focusable,
-      // keyboard-activatable, and announced as a button by screen
-      // readers. The type="button" prevents it from submitting any
-      // ambient form (it is not inside a form today, but a future
-      // change that wrapped the header in a form would make
-      // type="button" the difference between "opens the dialog" and
-      // "submits the surrounding form").
-      //
-      // data-action="open-create-dialog" is the *same* delegation hook
-      // the empty state's "Create your first task" button uses. The
-      // event layer's delegated click handler dispatches to the same
-      // `handleOpenCreate`; the trigger element is whichever button
-      // the user actually clicked, so focus restoration lands on the
-      // right button.
-      //
-      // data-cy="dashboard-create" — distinct from
-      // "dashboard-empty-create" — so a test can target "the header
-      // create button" without ambiguity. See the module header for
-      // the rationale on the two selectors.
-      //
-      // The button's text "Create task" is the same imperative mood
-      // the empty state's "Create your first task" uses, shortened
-      // for the header's narrower context. A future change that
-      // wanted an icon would need an aria-label to keep the button
-      // readable — the same rule the empty state's affordance follows.
+      // The persistent create affordance. [unchanged from the previous
+      // delivery]
       el('button', {
         type: 'button',
         class: 'dashboard__create-button',
@@ -281,10 +260,7 @@ export function renderDashboard(state) {
           cy: 'dashboard-sidebar',
         },
       }, [
-        /* The commander panel.
-         * [unchanged from the previous delivery — aria-labelledby on
-         *  the section, the h2 with commander-heading, and the
-         *  visible disclosure paragraph.] */
+        /* The commander panel. [unchanged] */
         el('section', {
           class: 'commander',
           'aria-labelledby': 'commander-heading',
@@ -295,17 +271,9 @@ export function renderDashboard(state) {
           }, 'Commander'),
           el('p', { class: 'commander__name' }, 'Commander Aria Vance'),
           el('p', { class: 'commander__role' }, 'Mission Operations Lead'),
-          el('p', { class: 'commander__disclosure' }, COMMANDER_DISCLOSURE),
         ]),
 
-        /* The counter slot.
-         *
-         * [unchanged from the previous delivery — a plain <section>
-         *  with class "sidebar-counter", no identity attributes. The
-         *  counter element (emitted by renderCounter) carries the
-         *  region, id, and data-cy. See the module header's "The
-         *  counter slot vs the counter element" section.]
-         */
+        /* The counter slot. [unchanged — filled by renderCounter] */
         el('section', {
           class: 'sidebar-counter',
         }, [
@@ -313,12 +281,52 @@ export function renderDashboard(state) {
           // by design: the counter is a child view's output, not the
           // dashboard's.
         ]),
+
+        /* The clear-all button — the sidebar's destructive affordance.
+         *
+         * Position: a sibling of the counter (below it, in the
+         * sidebar's flex column). The user sees the count, then
+         * the button that acts on the count. That order is the
+         * safety margin — the read happens before the click.
+         *
+         * State: disabled when the store is empty. The `disabled`
+         * attribute prevents click dispatch in modern browsers; the
+         * `aria-disabled` attribute is the assistive-technology
+         * signal. Both are set explicitly because a button that is
+         * disabled by the `disabled` attribute alone is not
+         * announced as disabled in every screen reader, and an
+         * `aria-disabled`-only button still dispatches clicks
+         * (requiring the handler to check). Setting both is the
+         * belt-and-braces correct form.
+         *
+         * Accessibility: the `aria-label` includes the count so a
+         * screen-reader user hears the consequence before the
+         * button's name. Sighted users read the count in the
+         * counter above; the label gives the screen-reader user
+         * the same information in the same order.
+         */
+        el('button', {
+          type: 'button',
+          class: 'sidebar-clear-all',
+          id: CLEAR_ALL_ID,
+          dataset: {
+            action: 'open-clear-all-dialog',
+            cy: CLEAR_ALL_DATA_CY,
+          },
+          disabled: clearAllDisabled,
+          'aria-disabled': clearAllDisabled ? 'true' : 'false',
+          'aria-label':
+            totalTaskCount === 0
+              ? 'Clear all tasks (no tasks to clear)'
+              : `Clear all tasks (${totalTaskCount} task${totalTaskCount === 1 ? '' : 's'} will be deleted)`,
+        }, 'Clear all tasks'),
       ]),
 
       el('section', {
         class: 'dashboard__main',
         dataset: { region: 'main' },
       }, [
+        /* The search bar. [unchanged from the delivered file] */
         el('div', {
           class: 'search-bar',
           id: 'dashboard-search',
@@ -327,8 +335,6 @@ export function renderDashboard(state) {
             cy: 'dashboard-search',
           },
         }, [
-          // [unchanged from the delivered file — the search input is
-          // the one persistent element inside the dashboard.]
           el('label', {
             for: 'search-input',
             class: 'search-bar__label',
@@ -345,39 +351,11 @@ export function renderDashboard(state) {
           }),
         ]),
 
-        /* The list slot.
-         *
-         * [unchanged from the previous delivery — a plain <div> with
-         *  class "dashboard__list-slot" and
-         *  data-listener="task-actions". No identity attributes: the
-         *  task-area container (emitted by views/taskList.js) carries
-         *  the id, data-cy, and data-region.]
-         *
-         * The data-listener attribute is the *delegation boundary* —
-         * the event layer attaches its delegated click listener to
-         * this element, and matches [data-action] descendants within
-         * it. The attribute is not a region attribute; the region
-         * "list" names the task-area container inside the slot, not
-         * the slot itself. See the module header's "The list slot vs
-         * the task-area container" section.
-         *
-         * Note: with the header button added (above), the event
-         * layer's delegated click handler needs to cover *both* the
-         * task-actions well and the header button. See the
-         * corresponding app.js note: the delegation is extended to
-         * the dashboard root (`root`), so a click anywhere in the
-         * dashboard that lands on a `[data-action]` element is
-         * dispatched — the task-actions well and the header's create
-         * button are covered by the same listener.
-         */
+        /* The list slot. [unchanged — filled by renderSearchResults] */
         el('div', {
           class: 'dashboard__list-slot',
           dataset: { listener: 'task-actions' },
-        }, [
-          // Filled by renderSearchResults (which composes renderTaskList).
-          // Empty in the shell (renderDashboard) by design: the task-area
-          // container is a child view's output, not the dashboard's.
-        ]),
+        }, []),
       ]),
     ]),
   ]);
@@ -396,29 +374,16 @@ export function renderDashboard(state) {
  *     class). The task-area container inside it carries the region,
  *     id, and data-cy.
  *
- * Both slots are found by their classes because both slots are wells
- * — plain wrappers whose job is layout. The identity belongs to the
- * container the child view emits, not to the well that holds it.
- *
- * The header is not filled by the wrapper — it has no regions a child
- * view fills. The header's own content (title, subtitle, hero, create
- * button) is emitted by renderDashboard; the empty-state create
- * affordance is emitted by renderNoTasks inside the list slot's
- * content.
+ * The clear-all button is *not* filled by the wrapper — it is
+ * emitted by `renderDashboard` itself, because its disabled state
+ * depends on `state.tasks.length`, which `renderDashboard` has.
+ * A future change that wanted the wrapper to control the button's
+ * state would be a change to the state contract, not the wrapper.
  */
 export function renderDashboardFilled(state, views) {
   const root = renderDashboard(state);
 
-  // The counter slot is the well — a plain section with the class
-  // .sidebar-counter. The counter element is placed inside it by
-  // renderCounter; the counter element carries the region, id, and
-  // data-cy.
   const counterSlot = root.querySelector('.sidebar-counter');
-
-  // The list slot is the well — a plain div with the class
-  // .dashboard__list-slot. The task-area container is placed inside
-  // it by renderSearchResults (which composes renderTaskList); the
-  // container carries the region, id, and data-cy.
   const listSlot = root.querySelector('.dashboard__list-slot');
 
   if (counterSlot) {

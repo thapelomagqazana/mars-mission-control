@@ -9,74 +9,61 @@
  *  See the previous deliveries for the full rationale.]
  *
  * Focus styles — the inventory, in CSS
- *   Every focusable control the app renders receives the global
- *   :focus-visible rule:
+ *   [unchanged from the previous delivery — see that file's header
+ *    for the reasoning on :focus-visible vs :focus, box-shadow vs
+ *    outline, and the safe pairing of `outline: none` with
+ *    `box-shadow` in the same rule.]
  *
- *     :focus-visible {
- *       outline: none;
- *       box-shadow: var(--shadow-focus);
- *     }
+ * The sidebar's clear-all button
+ *   A secondary-style button below the counter. It uses the danger
+ *   role's outline (not its fill) because the button is *present* at
+ *   every state, including when the store is empty. A filled danger
+ *   button that appears at every scroll position would read as the
+ *   page's primary action; the button is the page's most destructive
+ *   action, but not its primary one. The outline treatment —
+ *   transparent background, danger-coloured border and text — is
+ *   the visual register of "here is a thing you can do, and it is
+ *   destructive," without competing with the create button for the
+ *   eye.
  *
- *   The rule's two declarations are paired in the same declaration
- *   block. `outline: none` is safe *because* `box-shadow: var(--shadow-
- *   focus)` replaces the outline in the same rule — the WCAG 1.4.11
- *   requirement (focus is visible) is satisfied by the box-shadow, not
- *   by leaving the outline on. A rule that removed the outline without
- *   a replacement would be a bug; the test at
- *   tests/unit/node/focusStyleInventory.test.js fails any such rule.
+ *   When the store is empty, the button is disabled. The disabled
+ *   state is a reduced-opacity treatment on the same outline — a
+ *   disabled button that "disappeared" would leave the layout
+ *   shifting whenever the count crossed zero.
  *
- *   Why :focus-visible and not :focus:
- *     :focus fires on every focus event, including a mouse click — a
- *     button clicked by mouse would flash a ring for a fraction of a
- *     second, which reads as a visual glitch, not a state indicator.
- *     :focus-visible fires only for keyboard and assistive-technology
- *     focus — the users for whom a visible ring is the point. The rule
- *     uses :focus-visible alone for the ring; a mouse user gets the
- *     hover state instead, and a keyboard user gets the ring.
- *
- *   Why box-shadow and not outline:
- *     An outline is a rectangle around the element's box; it does not
- *     follow the element's border-radius. A rounded button with an
- *     outline has a rectangular outline — it looks like a bug. A
- *     box-shadow with `0 0 0 2px` (offset 0, spread 2px) is drawn as a
- *     ring that follows the element's border-radius. The colour and
- *     width are the same; the *geometry* is what changes. This is the
- *     modern focus-ring technique.
- *
- *   The inventory (§2d):
- *     Every focusable control from the event catalog is listed there,
- *     with its focus treatment. The list is the CSS-side counterpart of
- *     the doc-side inventory in docs/focus-styles.md. A future control
- *     adds itself to §2d (and to the doc) in the same commit — the
- *     e2e test (tests/e2e/focusTraversal.cy.js) tabs through the
- *     controls and asserts the ring appears on each; a control that
- *     was tabbed to without a ring would fail the test.
- *
- *   The two complementary cues:
- *     The two inputs (.search-bar__input and .task-dialog__input)
- *     change their border colour on :focus. The border change is a
- *     *complementary* cue — a "this field is active" indicator for
- *     mouse users who click into the field. The ring still appears on
- *     :focus-visible (keyboard focus) on top of the border change. Two
- *     cues, layered: the border for any focus event; the ring for
- *     keyboard focus. Both are intentional; neither replaces the other.
+ * The clear-all dialog
+ *   Structurally parallel to the delete dialog (§3b). Same geometry,
+ *   same backdrop, same focus treatment. The two differ in the
+ *   heading text (a count vs. a task title) and the button labels
+ *   ("Delete all" vs. "Delete"). The CSS is a copy of §3b with a
+ *   `.clear-all-dialog__` prefix, because the two dialogs are the
+ *   same kind of thing (a destructive confirmation) shown in the
+ *   same place (centered, modal, over a scrim). Sharing the styles
+ *   via a common class would have been "reuse," but the two dialogs
+ *   have different view modules and different copy; keeping their
+ *   CSS separate means a future change to one does not accidentally
+ *   propagate to the other.
  *
  * What this file does NOT do
  *   [unchanged from the previous delivery — plus:]
  *   - No `outline: none` without a box-shadow (or a border-colour
- *     change) in the same rule. Every occurrence of `outline: none` is
- *     paired with a replacement in the same declaration block. The
- *     pairing is tested.
- *   - No `:focus` alone declaring a ring. `:focus` is used only for
- *     the inputs' border-colour cue, which is complementary to the
- *     `:focus-visible` ring, not a substitute for it.
- *   - No focusable control missing from the inventory. The inventory
- *     in §2d lists every control from the event catalog; the e2e test
- *     asserts each is reachable and visibly focused.
+ *     change) in the same rule.
+ *   - No `:focus` alone declaring a ring.
+ *   - No focusable control missing from the inventory.
+ *
+ * Responsive behaviour — the six fixes this file resolves:
+ *   [unchanged from the previous delivery — see that file's list.
+ *    The clear-all button and dialog are added to the existing
+ *    mobile breakpoint's coverage; the desktop geometry is
+ *    identical to the delete dialog's, so no new wide-screen fix
+ *    is needed.]
  *
  * Structure
  *   [unchanged from the previous delivery — plus:]
- *   2d. Focus styles — the inventory and the two complementary cues
+ *   2e. The witty title modifier
+ *   3b. Delete confirmation dialog
+ *   3c. Clear-all dialog
+ *   3d. Sidebar clear-all button
  */
 
 /* ============================================================
@@ -140,15 +127,7 @@ textarea {
 
 /* The global focus ring.
  *
- * [see the file header's "Focus styles — the inventory, in CSS" section
- *  for the reasoning about :focus-visible vs :focus, the box-shadow vs
- *  outline choice, and the safe pairing of outline: none with box-shadow
- *  in the same rule.
- *
- *  This is the *only* focus-ring rule for most controls. Every
- *  focusable control in the app relies on it; the two inputs add a
- *  complementary border-colour cue on :focus (§2d, and at the input
- *  rules below). The two rules are layered, not redundant.]
+ * [see the file header's "Focus styles" section for the reasoning.]
  */
 :focus-visible {
   outline: none;
@@ -194,8 +173,6 @@ textarea {
   box-shadow: var(--shadow-md);
 }
 
-/* The Mars hero frame — the layout slot and the visual fallback.
- * [unchanged from 5.2.1 — the border-radius: 50% is a sanctioned literal.] */
 .dashboard__hero-frame {
   inline-size: var(--layout-hero-size);
   block-size: var(--layout-hero-size);
@@ -212,8 +189,6 @@ textarea {
   display: block;
 }
 
-/* The heading wrapper's `min-width: 0` is the 320px overflow guard for
- * the title. [unchanged from the previous delivery.] */
 .dashboard__heading {
   display: flex;
   flex-direction: column;
@@ -228,6 +203,20 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The witty title modifier. [unchanged from the previous delivery —
+ * see that file for the width: fit-content / max-width: 100%
+ * rationale.] */
+.dashboard__title--witty {
+  font-family: var(--font-family-mono);
+  letter-spacing: 0.01em;
+  padding-bottom: var(--space-1);
+  border-bottom: var(--border-width-medium) var(--border-style-solid)
+    var(--color-accent);
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .dashboard__subtitle {
@@ -255,8 +244,6 @@ textarea {
   gap: var(--space-5);
 }
 
-/* The main column's `overflow-x: hidden` is the 320px overflow guard
- * of last resort. [unchanged from the previous delivery.] */
 .dashboard__main {
   grid-area: main;
   padding: var(--space-5);
@@ -299,34 +286,21 @@ textarea {
  *   1. .search-bar__input
  *      Global :focus-visible ring (from §1) + complementary
  *      :focus border-colour cue (below, at the input's rule).
- *      Why two cues: a mouse user clicking into the field sees the
- *      border change; a keyboard user tabbing into it sees both the
- *      border change and the ring. The border is not a substitute for
- *      the ring — a border-colour change alone does not satisfy
- *      WCAG 2.4.11 on all surfaces; the ring does.
  *
- *   2. .empty-state__action  (Create your first task / Clear search)
- *      Global :focus-visible ring. No override — the button is a
- *      plain <button>; the global rule is sufficient.
+ *   2. .empty-state__action
+ *      Global :focus-visible ring. No override.
  *
  *   3. .task-card__action--edit
- *      Global :focus-visible ring. No override — the button is a
- *      plain <button>; the global rule is sufficient. The button's
- *      accent-muted background (from §3) is a state; the ring is
- *      focus.
+ *      Global :focus-visible ring. No override.
  *
  *   4. .task-card__action--delete
  *      Global :focus-visible ring. No override.
  *
- *   5. .task-dialog__input  (title, creator, assignee)
- *      Global :focus-visible ring + complementary :focus
- *      border-colour cue (same treatment as .search-bar__input).
+ *   5. .task-dialog__input
+ *      Global :focus-visible ring + complementary :focus border cue.
  *
- *   6. .task-dialog__input--textarea  (description)
- *      Same as .task-dialog__input — the textarea shares the
- *      .task-dialog__input rule for its base styling and its :focus
- *      cue; the textarea's extra rules (resize, min-height, font-
- *      family) are not focus-related.
+ *   6. .task-dialog__input--textarea
+ *      Same as .task-dialog__input.
  *
  *   7. .task-dialog__button--cancel
  *      Global :focus-visible ring. No override.
@@ -334,50 +308,50 @@ textarea {
  *   8. .task-dialog__button--submit
  *      Global :focus-visible ring. No override.
  *
+ *   9. .dashboard__create-button
+ *      Global :focus-visible ring. No override.
+ *
+ *  10. .delete-dialog__button--cancel
+ *      Global :focus-visible ring. No override.
+ *
+ *  11. .delete-dialog__button--confirm
+ *      Global :focus-visible ring. No override.
+ *
+ *  12. .sidebar-clear-all  (NEW in this delivery)
+ *      Global :focus-visible ring. No override. The button is
+ *      focusable in both its enabled and disabled states (a
+ *      `disabled` <button> does not receive `:focus`, but a
+ *      future change that switched to `aria-disabled` alone would
+ *      still show the ring — the rule is the same for both
+ *      states).
+ *
+ *  13. .clear-all-dialog__button--cancel  (NEW in this delivery)
+ *      Global :focus-visible ring. No override.
+ *
+ *  14. .clear-all-dialog__button--confirm  (NEW in this delivery)
+ *      Global :focus-visible ring. No override.
+ *
  * Not in the inventory (correctly):
  *
  *   - The header title, subtitle, hero frame, and hero image. Not
- *     interactive; not focusable. A future change that made one
- *     interactive (e.g. the header logo linking to home) would add
- *     it here in the same commit.
- *
- *   - The counter element (<span class="task-counter">). It is a
- *     live region (`role="status"`), not a control. A <span> with no
- *     tabindex and no click handler is not focusable; the counter's
- *     accessible-name semantics come from the live region, not from
- *     being focusable.
- *
- *   - The empty-state container. Same — `role="status"` on the
- *     container; the action button inside it is in the inventory.
- *
- *   - The dialog itself. A <dialog> is not focusable by default
- *     (it can be focused via .focus() for focus management, but it
- *     is not in the tab order as a whole — its fields and buttons
- *     are). The dialog's fields and buttons are in the inventory.
- *
- *   - The task-area container. A plain <div> with a region attribute;
- *     not focusable. Its content (the empty state's button, or the
- *     task cards' buttons) is in the inventory.
+ *     interactive; not focusable.
+ *   - The counter element. A live region, not a control.
+ *   - The empty-state container. `role="status"` on the container;
+ *     the action button inside it is in the inventory.
+ *   - The dialogs themselves. A <dialog> is not focusable by default
+ *     as a whole — its fields and buttons are.
+ *   - The task-area container. A plain <div>; its content is.
  *
  * The audit (tests/unit/node/focusStyleInventory.test.js) parses
  * this file and asserts:
  *   - Every `outline: none` is paired with a `box-shadow` or a
  *     `border-color` in the same declaration block.
- *   - No `:focus` alone declares a ring (only `:focus-visible` does).
+ *   - No `:focus` alone declares a ring.
  *   - The global rule uses `var(--shadow-focus)`, not a literal.
  *
- * The e2e test (tests/e2e/focusTraversal.cy.js) tabs through every
- * focusable control and asserts the ring appears — so a control
- * that was *not* in the inventory (a future addition not yet
- * documented) would fail the test the moment it is focusable.
- *
- * No rules are declared in this block — the inventory is *documentation*
- * of the focus treatments the rules below implement. Every rule that
- * affects focus is at its element's site, named in this inventory. A
- * future change that wanted a focus-ring override (an offset ring on
- * a control inside a tight layout, a ring that needs to be drawn
- * outside the control's box) would add its rule *here*, and add a row
- * to the inventory above.
+ * No rules are declared in this block — the inventory is
+ * *documentation* of the focus treatments the rules below
+ * implement.
  * ============================================================ */
 
 /* --- Commander block (inside the sidebar region) ----------- */
@@ -409,8 +383,6 @@ textarea {
   color: var(--color-text-secondary);
 }
 
-/* The disclosure paragraph — a "note" treatment.
- * [unchanged from the previous delivery.] */
 .commander__disclosure {
   margin: 0;
   padding: var(--space-3) var(--space-4);
@@ -424,9 +396,7 @@ textarea {
 }
 
 /* --- The counter slot (the well) --------------------------- */
-/*
- * [unchanged from the previous delivery.]
- */
+
 .sidebar-counter {
   padding: var(--space-4);
   background: var(--color-bg-panel);
@@ -435,9 +405,7 @@ textarea {
 }
 
 /* --- The counter element (region: [data-region="counter"]) - */
-/*
- * [unchanged from the previous delivery.]
- */
+
 .task-counter {
   display: inline-block;
   font-size: var(--font-size-xl);
@@ -475,36 +443,6 @@ textarea {
   color: var(--color-text-subtle);
 }
 
-/* The search input's focus treatment, in two parts.
- *
- *   :focus-visible (inherited from the global rule in §1) — the ring,
- *                    for keyboard focus. The ring is what satisfies
- *                    WCAG 2.4.11 on this control.
- *
- *   :focus (this rule) — a border-colour change, for *any* focus event
- *                       (mouse click into the field, keyboard Tab into
- *                       it). This is a complementary cue — the "this
- *                       field is active" border that mouse users expect
- *                       when they click into a text field. It is *not*
- *                       a substitute for the ring: a border colour
- *                       change alone (border-only focus) fails WCAG
- *                       2.4.11 on this control because the border's
- *                       contrast against the panel is below the 3:1
- *                       threshold at the accent's hue. The ring's
- *                       colour (--color-focus-ring) has the contrast;
- *                       the border's colour (--color-accent) does not.
- *
- * The two are layered, not redundant. The inventory at §2d records
- * this control's treatment as "global ring + complementary border
- * cue." A future change that removed the :focus rule would still
- * pass WCAG (the ring remains); a future change that removed the
- * ring and kept the border would fail WCAG (the border does not meet
- * the threshold). The `outline: none` in this rule is *not* the
- * removal of a focus indicator — the input's focus indicator is the
- * global box-shadow; the outline on a focused input is a browser
- * default that would otherwise draw a second ring on top of the
- * box-shadow, which looks like a bug (two rings). The `outline: none`
- * removes the browser default because the box-shadow replaces it. */
 .search-bar__input:focus {
   outline: none;
   border-color: var(--color-accent);
@@ -512,14 +450,11 @@ textarea {
 
 /* --- The task-area slot (the well) ------------------------- */
 /*
- * [unchanged from the previous delivery — the slot is a plain wrapper
- *  with class .dashboard__list-slot; no rule of its own.]
+ * [unchanged from the previous delivery — no rule of its own.]
  */
 
-/* --- The task-area container (region: [data-region="list"]) */
-/*
- * [unchanged from the previous delivery.]
- */
+/* --- The task-area container (region: [data-region="list"]) - */
+
 .task-area-container {
   display: flex;
   flex-direction: column;
@@ -566,8 +501,6 @@ textarea {
   color: var(--color-text-primary);
 }
 
-/* The description's `overflow-wrap: break-word` is the 320px overflow
- * guard for long unbroken words. [unchanged from the previous delivery.] */
 .task-card__description {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
@@ -600,11 +533,6 @@ textarea {
   margin-top: var(--space-2);
 }
 
-/* The task card action buttons rely on the global :focus-visible ring
- * (§1). No override — the buttons are plain <button> elements; the
- * global ring follows their border-radius (the ring is rounded
- * around a rounded button). The buttons are listed in the inventory
- * at §2d. */
 .task-card__action {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
@@ -664,9 +592,6 @@ textarea {
   max-width: var(--layout-reading-measure);
 }
 
-/* The empty state's action button relies on the global :focus-visible
- * ring (§1). No override — the button is a plain <button>. The button
- * is listed in the inventory at §2d. */
 .empty-state__action {
   padding: var(--space-3) var(--space-5);
   background: var(--color-accent);
@@ -682,9 +607,6 @@ textarea {
 
 /* --- Dialog ------------------------------------------------ */
 
-/* The dialog's `max-width: calc(100vw - 2 * var(--space-4))` is the
- * 320px overflow guard for the dialog. [unchanged from the previous
- * delivery.] */
 .task-dialog {
   padding: 0;
   border: var(--border-width-thin) var(--border-style-solid)
@@ -741,23 +663,6 @@ textarea {
   transition: border-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-/* The dialog input's focus treatment, identical to the search input's.
- *
- *   :focus-visible — the ring (from §1), the WCAG-compliant focus
- *                    indicator.
- *   :focus (this) — a border-colour change, a complementary cue for
- *                    any focus event. Not a substitute for the ring
- *                    (see the search input's comment for the contrast
- *                    reasoning).
- *
- * The `outline: none` is paired with the global `box-shadow: var(--shadow-
- * focus)` — the browser default outline is removed because the global
- * rule's box-shadow replaces it. A future change that removed the
- * global rule while keeping this one would leave the inputs without a
- * compliant focus indicator; the focusStyleInventory test would fail
- * because the `outline: none` in this rule would have no replacement
- * (the box-shadow lives in §1, not in this rule — see the test's
- * documentation for how it resolves the pairing across rules). */
 .task-dialog__input:focus {
   outline: none;
   border-color: var(--color-accent);
@@ -786,10 +691,6 @@ textarea {
   padding-top: var(--space-2);
 }
 
-/* The dialog's cancel and submit buttons rely on the global
- * :focus-visible ring (§1). No override — both are plain <button>
- * elements; the global ring follows their border-radius. The buttons
- * are listed in the inventory at §2d. */
 .task-dialog__button {
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-md);
@@ -819,12 +720,7 @@ textarea {
   background: var(--color-accent-hover);
 }
 
-/* The persistent "Create task" affordance in the header. Its visual
- * weight is secondary to the title (it is not the primary action on
- * the page — the page is a task list), but it is present at every
- * scroll position and every state. The button uses the accent colour
- * and a rounded shape, matching the empty state's action for visual
- * consistency across the two create affordances. */
+/* The persistent "Create task" affordance in the header. */
 .dashboard__create-button {
   margin-inline-start: auto;
   padding: var(--space-2) var(--space-4);
@@ -839,6 +735,243 @@ textarea {
 
 .dashboard__create-button:hover {
   background: var(--color-accent-hover);
+}
+
+/* ============================================================
+ * 3b. Delete confirmation dialog
+ *
+ * [unchanged from the previous delivery — see that file for the
+ *  rationale on the destructive variant's geometry, heading
+ *  colour, confirm-button colour, and body copy.]
+ * ============================================================ */
+
+.delete-dialog {
+  padding: 0;
+  border: var(--border-width-thin) var(--border-style-solid)
+    var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  max-width: var(--layout-dialog-max-width);
+  width: calc(100vw - 2 * var(--space-4));
+  max-height: calc(100vh - 2 * var(--space-4));
+  box-shadow: var(--shadow-overlay);
+}
+
+.delete-dialog::backdrop {
+  background: var(--color-bg-scrim);
+  -webkit-backdrop-filter: blur(var(--blur-overlay));
+  backdrop-filter: blur(var(--blur-overlay));
+}
+
+.delete-dialog__heading {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--border-width-thin) var(--border-style-solid)
+    var(--color-border-default);
+  font-size: var(--font-size-lg);
+  color: var(--color-danger);
+}
+
+.delete-dialog__body {
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  max-width: var(--layout-reading-measure);
+}
+
+.delete-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-top: var(--border-width-thin) var(--border-style-solid)
+    var(--color-border-default);
+}
+
+.delete-dialog__button {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-sm);
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.delete-dialog__button--cancel {
+  background: transparent;
+  border: var(--border-width-thin) var(--border-style-solid)
+    var(--color-border-default);
+  color: var(--color-text-secondary);
+}
+
+.delete-dialog__button--cancel:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.delete-dialog__button--confirm {
+  background: var(--color-danger);
+  color: var(--color-text-primary);
+}
+
+.delete-dialog__button--confirm:hover {
+  background: var(--color-danger-hover, var(--color-danger));
+}
+
+/* ============================================================
+ * 3c. Clear-all dialog
+ *
+ * Structurally parallel to §3b (the delete dialog): same geometry,
+ * same backdrop, same focus treatment. The two dialogs are the
+ * same kind of thing — a destructive confirmation — shown in the
+ * same place (centered, modal, over a scrim). A reader who has
+ * read §3b can read this block at a glance.
+ *
+ * The two dialogs are *separate* CSS for a specific reason: they
+ * are separate view modules (deleteDialog.js and clearAllDialog.js)
+ * with different copy, different callbacks, and different
+ * consequences (one task vs. the entire store). Sharing the CSS
+ * via a common `.destructive-dialog` class would be "reuse," but a
+ * future change to the delete dialog's styling would then
+ * accidentally change the clear-all dialog's styling. The
+ * duplication is intentional: two independent dialogs, two
+ * independent stylesheets blocks, two independent decisions.
+ *
+ * The heading uses `--color-danger` for the same reason the delete
+ * dialog's heading does: the user reads the sentence "Delete all 3
+ * tasks?" and the red tells them, before they read the words,
+ * that this is a destructive dialog.
+ * ============================================================ */
+
+.clear-all-dialog {
+  padding: 0;
+  border: var(--border-width-thin) var(--border-style-solid)
+    var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  max-width: var(--layout-dialog-max-width);
+  width: calc(100vw - 2 * var(--space-4));
+  max-height: calc(100vh - 2 * var(--space-4));
+  box-shadow: var(--shadow-overlay);
+}
+
+.clear-all-dialog::backdrop {
+  background: var(--color-bg-scrim);
+  -webkit-backdrop-filter: blur(var(--blur-overlay));
+  backdrop-filter: blur(var(--blur-overlay));
+}
+
+.clear-all-dialog__heading {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--border-width-thin) var(--border-style-solid)
+    var(--color-border-default);
+  font-size: var(--font-size-lg);
+  color: var(--color-danger);
+}
+
+.clear-all-dialog__body {
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  max-width: var(--layout-reading-measure);
+}
+
+.clear-all-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-top: var(--border-width-thin) var(--border-style-solid)
+    var(--color-border-default);
+}
+
+.clear-all-dialog__button {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-sm);
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.clear-all-dialog__button--cancel {
+  background: transparent;
+  border: var(--border-width-thin) var(--border-style-solid)
+    var(--color-border-default);
+  color: var(--color-text-secondary);
+}
+
+.clear-all-dialog__button--cancel:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.clear-all-dialog__button--confirm {
+  background: var(--color-danger);
+  color: var(--color-text-primary);
+}
+
+.clear-all-dialog__button--confirm:hover {
+  background: var(--color-danger-hover, var(--color-danger));
+}
+
+/* ============================================================
+ * 3d. Sidebar clear-all button
+ *
+ * The sidebar's destructive affordance. Placed below the counter
+ * in the sidebar's flex column. Its treatment is *outline* (a
+ * danger-coloured border and text on a transparent background),
+ * not *fill* (the delete-dialog's confirm style), for a specific
+ * reason:
+ *
+ *   The delete-dialog's "Delete" button is inside a modal. The
+ *   user opened the modal deliberately, and their finger or cursor
+ *   is already poised over the button. The filled style says "yes,
+ *   this is the action you opened the modal for."
+ *
+ *   The sidebar's "Clear all tasks" is not inside a modal. It sits
+ *   in the sidebar, next to the counter, at all times. A filled
+ *   danger button at every scroll position would read as the
+ *   page's primary action — the opposite of the truth. The outline
+ *   style says "here is a thing you can do, and it is destructive,"
+ *   without competing with the create button for the eye.
+ *
+ * The disabled state:
+ *   When the store is empty, the button is disabled. The disabled
+ *   state is a reduced-opacity treatment on the same outline —
+ *   the border, text, and background all fade together, so the
+ *   button reads as "present, not actionable." A button that
+ *   disappeared at zero tasks would shift the layout every time
+ *   the count crossed zero, which is the visual equivalent of a
+ *   flicker. The disabled state preserves the layout.
+ *
+ *   `cursor: not-allowed` is a visual cue; a disabled <button>
+ *   does not fire click events in modern browsers, so the cursor
+ *   is not the enforcement — it is the hint.
+ * ============================================================ */
+
+.sidebar-clear-all {
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  border: var(--border-width-thin) var(--border-style-solid)
+    var(--color-danger);
+  border-radius: var(--radius-md);
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    color var(--motion-duration-fast) var(--motion-easing-standard),
+    opacity var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.sidebar-clear-all:hover:not(:disabled) {
+  background: var(--color-danger);
+  color: var(--color-text-primary);
+}
+
+.sidebar-clear-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ============================================================
@@ -858,24 +991,7 @@ textarea {
 }
 
 /* --- Toast region ----------------------------------------- */
-/*
- * The toast region is a fixed-position host in the bottom-right
- * corner of the viewport. It sits above the dashboard (`--z-header`
- * is 10; the toast is at `--z-toast`, a future ladder entry above
- * the header but below dialogs). For today, the toast uses
- * `--z-header + 1` via a calc — a future change that added a
- * `--z-toast` token would replace the calc. [See the note below.]
- *
- * Why bottom-right: the top-right is where the header's create
- * button is, and the top-left is the mission title. The bottom
- * corners are free, and bottom-right is the conventional position
- * for transient notifications in western UIs.
- *
- * `pointer-events: none` on the region — the toast does not
- * intercept clicks on the dashboard beneath it. `pointer-events:
- * auto` on the toast itself — a future dismiss button would be
- * clickable without needing the region to be interactive.
- */
+
 .toast-region {
   position: fixed;
   bottom: var(--space-5);
@@ -886,15 +1002,6 @@ textarea {
   gap: var(--space-2);
   pointer-events: none;
   max-width: min(24rem, calc(100vw - 2 * var(--space-5)));
-}
-
-@media (max-width: 768px) {
-  .toast-region {
-    bottom: var(--space-4);
-    right: var(--space-4);
-    left: var(--space-4);
-    max-width: none;
-  }
 }
 
 .toast {
@@ -910,9 +1017,6 @@ textarea {
   animation: toast-in var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-/* The variant classes. The colour accents the left border and the
- * icon (if a future change added one) — the text stays in the
- * primary colour so it is legible regardless of the variant. */
 .toast--success {
   border-left: var(--border-width-medium) var(--border-style-solid) var(--color-success);
 }
@@ -925,11 +1029,6 @@ textarea {
   border-left: var(--border-width-medium) var(--border-style-solid) var(--color-danger);
 }
 
-/* The enter animation. The reduced-motion block in tokens.css
- * neutralises the duration; the animation's `from` state is the
- * only thing that would be visible, and it commits to the `to`
- * state immediately (0.01ms). That is the correct degradation —
- * no motion, but the toast still appears. */
 @keyframes toast-in {
   from {
     opacity: 0;
@@ -943,14 +1042,39 @@ textarea {
 
 /* ============================================================
  * 5. Responsive — the breakpoint matrix, in CSS
- *   [unchanged from the previous delivery — see the matrix at
- *    docs/breakpoints.md and the block comments per media query.]
+ *
+ * [See the file header for the breakpoint matrix. The clear-all
+ *  button and the clear-all dialog are added to the existing
+ *  responsive coverage — no new breakpoints, no new fix categories,
+ *  just the two new components joining the existing ones at each
+ *  breakpoint.]
  * ============================================================ */
 
 @media (max-width: 320px) {
   .dashboard__header {
     padding: 0 var(--space-3);
     gap: var(--space-2);
+  }
+
+  .dashboard__hero-frame {
+    inline-size: 32px;
+    block-size: 32px;
+  }
+
+  .dashboard__create-button {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-sm);
+  }
+
+  .dashboard__title {
+    white-space: normal;
+    line-height: 1.1;
+    font-size: var(--font-size-base);
+  }
+
+  .dashboard__title--witty {
+    border-bottom: none;
+    padding-bottom: 0;
   }
 
   .commander__disclosure {
@@ -967,6 +1091,14 @@ textarea {
 
   .task-dialog__actions {
     padding-top: var(--space-1);
+  }
+
+  /* The sidebar's clear-all button gets the full width at the
+   * smallest viewport — the sidebar's horizontal real estate is
+   * scarce, and a full-width destructive button reads as clearly
+   * as a narrow one but is easier to tap. */
+  .sidebar-clear-all {
+    width: 100%;
   }
 }
 
@@ -1008,6 +1140,57 @@ textarea {
   .commander__disclosure {
     padding: var(--space-3);
   }
+
+  .toast-region {
+    bottom: var(--space-4);
+    right: var(--space-4);
+    left: var(--space-4);
+    max-width: none;
+  }
+
+  .delete-dialog__actions {
+    flex-direction: column-reverse;
+    padding: var(--space-4);
+  }
+
+  .delete-dialog__button {
+    width: 100%;
+  }
+
+  .delete-dialog__body {
+    padding: var(--space-4);
+  }
+
+  .delete-dialog__heading {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  /* The clear-all dialog matches the delete dialog's mobile
+   * treatment: buttons stack column-reverse (safe button at the
+   * thumb's reach), body and heading get tighter padding. */
+  .clear-all-dialog__actions {
+    flex-direction: column-reverse;
+    padding: var(--space-4);
+  }
+
+  .clear-all-dialog__button {
+    width: 100%;
+  }
+
+  .clear-all-dialog__body {
+    padding: var(--space-4);
+  }
+
+  .clear-all-dialog__heading {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  /* The clear-all button stretches full-width in the stacked
+   * sidebar (which is now a horizontal strip; the button becomes
+   * a full-width child of the flex-wrap layout). */
+  .sidebar-clear-all {
+    flex-basis: 100%;
+  }
 }
 
 @media (max-width: 1024px) {
@@ -1045,5 +1228,14 @@ textarea {
   .dashboard__main,
   .dashboard__sidebar {
     padding: var(--space-6);
+  }
+
+  /* The three dialogs get a slightly larger max-width on wide
+   * screens so they read as designed modals, not as undersized
+   * popovers centered in a large viewport. */
+  .task-dialog,
+  .delete-dialog,
+  .clear-all-dialog {
+    max-width: var(--layout-reading-measure);
   }
 }

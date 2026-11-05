@@ -12,6 +12,36 @@
  *   catching this and deciding whether to crash or start with an
  *   in-memory fallback.
  *
+ * The delete workflow's requirements on this store:
+ *
+ *   1. `deleteTask(id)` must remove exactly the targeted record.
+ *      Implemented by `tasks.filter(task => task.id !== id)` — a
+ *      task with a different id cannot be removed by this call.
+ *
+ *   2. `deleteTask(id)` must throw `NotFoundError` if the id is not
+ *      present. Implemented by the `index === -1` check before any
+ *      mutation. The delete dialog's "concurrent delete" path relies
+ *      on this: a task removed in another tab between the dialog's
+ *      open and the confirm surfaces as `NotFoundError`, which the
+ *      app handles by re-rendering without a toast.
+ *
+ *   3. `deleteTask(id)` must throw `StorageError` on write failure,
+ *      after rolling back. Implemented by the `previous` capture,
+ *      the `writeToStorage` call, and the rollback on `!write.ok`.
+ *
+ *   4. `deleteTask(id)` must write through `writeToStorage`, not
+ *      call localStorage directly. No localStorage reference exists
+ *      in this file; the adapter is the only thing that touches
+ *      storage. The delete workflow inherits the store's atomicity
+ *      guarantee because it does not bypass the store.
+ *
+ *   5. `clear()` must exist for the eventual clear-all control.
+ *      Implemented as a write of `[]` through the same path.
+ *
+ * Any change to these five properties is a change to the delete
+ * workflow's contract. The E2E delete spec (`tests/e2e/delete-task.cy.js`)
+ * asserts the observable consequences.
+ *
  * @module store/taskStore
  */
 
@@ -145,6 +175,11 @@ export function createTaskStore(persistence) {
   return {
     /**
      * Return a snapshot of the current task list.
+     *
+     * `slice()` returns a new array, so a caller who mutates the
+     * returned array cannot affect the store's internal state. The
+     * task objects themselves are frozen, so mutation of an
+     * individual task is also prevented.
      */
     getAll() {
       return tasks.slice();
@@ -152,6 +187,11 @@ export function createTaskStore(persistence) {
 
     /**
      * Return a single task by id, or `undefined` if not found.
+     *
+     * "Not found" is a normal query result, not an error. The error
+     * taxonomy reserves `NotFoundError` for mutating operations,
+     * where a missing resource means the caller's request cannot be
+     * fulfilled.
      */
     getById(id) {
       return tasks.find((task) => task.id === id);
@@ -166,6 +206,14 @@ export function createTaskStore(persistence) {
 
     /**
      * Create a new task from user input.
+     *
+     * The write happens *before* the store returns the task. If the
+     * write fails, the store rolls back the in-memory append and
+     * throws `StorageError` — so the caller does not receive a task
+     * that is only in memory.
+     *
+     * @throws {ValidationError} when the input fails validation
+     * @throws {StorageError} when persistence fails (the store rolls back)
      */
     create(userInput) {
       const task = buildTask(userInput);
@@ -183,6 +231,14 @@ export function createTaskStore(persistence) {
 
     /**
      * Update an existing task with a user-supplied patch.
+     *
+     * Auto fields are rejected on the patch. The task's identity is
+     * stable across updates, so references to it (in the DOM, in a
+     * running search) remain valid.
+     *
+     * @throws {NotFoundError} when no task with the given id exists
+     * @throws {ValidationError} when the patch fails validation
+     * @throws {StorageError} when persistence fails (the store rolls back)
      */
     update(id, patch) {
       const index = tasks.findIndex((task) => task.id === id);
@@ -204,6 +260,18 @@ export function createTaskStore(persistence) {
 
     /**
      * Remove a single task by id.
+     *
+     * Throws `NotFoundError` rather than returning `{ removed: false }`.
+     * The delete-confirmation dialog shows "Deleted '<title>'" on
+     * success and must not show that for a no-op. Throwing puts the
+     * decision in the caller, where it belongs.
+     *
+     * The write happens *after* the removal and *before* the return.
+     * A failure rolls back to the pre-delete array and throws
+     * `StorageError`.
+     *
+     * @throws {NotFoundError} when no task with the given id exists
+     * @throws {StorageError} when persistence fails (the store rolls back)
      */
     deleteTask(id) {
       const index = tasks.findIndex((task) => task.id === id);
@@ -222,6 +290,18 @@ export function createTaskStore(persistence) {
 
     /**
      * Remove every task.
+     *
+     * Clearing an empty store is a no-op, not an error: there is
+     * nothing to "not find". This is also the operation that writes
+     * `[]` when the user clears a populated store — the write is the
+     * persistence of the emptied state.
+     *
+     * The write happens *after* the clear and *before* the return.
+     * A failure rolls back to the pre-clear array and throws
+     * `StorageError` with `operation: 'clear'` (not `'save'`) — the
+     * operation value names the store method's *kind* of write.
+     *
+     * @throws {StorageError} when persistence fails (the store rolls back)
      */
     clear() {
       const previous = tasks;

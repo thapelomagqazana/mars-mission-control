@@ -13,8 +13,8 @@
  *     edits the CSS, not the markup.
  *   - data-task-id="<id>"
  *     The row's identity, used by the event layer's delegation (a click
- *     finds the closest `[data-task-id]`) and by tests that want to assert
- *     on a specific task.
+ *     finds the closest `[data-task-id]`) and by tests that want to
+ *     assert on a specific task.
  *   - data-cy="task-card"
  *     The card's role for tests (e.g., counting visible cards).
  *
@@ -24,17 +24,58 @@
  *   `[data-cy="task-card-title"]` without relying on CSS classes or DOM
  *   position. The selectors are defined in `TASK_CARD_SELECTORS` below.
  *
+ * Per-action selectors:
+ *   The edit and delete buttons each carry their own `data-cy`. The
+ *   event layer's delegation does not use them (it matches
+ *   `[data-action]`), but tests do — a test that wants "the delete
+ *   button for the Survey crater task" targets the card by
+ *   `data-task-id`, then the button by `data-cy="task-card-delete"`.
+ *   Two selectors, two concepts, one query.
+ *
  * Security (The Escaping Boundary):
  *   Every user-supplied string (title, description, creator, assignee)
  *   is passed as a child to `el()`. The `el` helper uses
  *   `document.createTextNode`, which treats the string as literal text.
- *   No `innerHTML` is used. An XSS payload renders as a string, not code.
+ *   No `innerHTML` is used. An XSS payload renders as a string, not
+ *   code.
+ *
+ *   The `aria-label` on the edit and delete buttons interpolates the
+ *   task title. It is passed as an attribute *value* via
+ *   `setAttribute`, which does not execute. A title of
+ *   `<script>alert(1)</script>` becomes a literal string in the
+ *   attribute; a screen reader reads it as text. The same escaping
+ *   discipline applies to text children and to attribute values —
+ *   both are inert.
  *
  * Accessibility:
  *   The action buttons include the task title in their `aria-label`
- *   (e.g., "Edit task: Check hull"). A screen-reader user hearing "Edit"
- *   repeated five times in a list would not know which task each button
- *   applies to. The title disambiguates them.
+ *   (e.g., "Edit task: Check hull"). A screen-reader user hearing
+ *   "Edit" repeated five times in a list would not know which task
+ *   each button applies to. The title disambiguates them.
+ *
+ *   The task title's `h2` is the primary landmark within the card; a
+ *   future change that added a card-level link or a card-level action
+ *   should reference it via `aria-labelledby` if the action's label
+ *   would otherwise be ambiguous.
+ *
+ * The delete workflow's requirements on this card:
+ *   1. The delete button carries `data-task-id` — the value the
+ *      delegation reads as the target. (Implemented; the value
+ *      matches the card's own `data-task-id`.)
+ *   2. The delete button carries `data-action="delete-task"` — the
+ *      dispatch key the app matches. (Implemented.)
+ *   3. The delete button is a real `<button type="button">` — not a
+ *      styled `<a>` or `<div>` — so it is focusable, keyboard-
+ *      activatable, and announced as a button. (Implemented; the
+ *      `type="button"` matters because a future change that wrapped
+ *      the actions in a `<form>` would otherwise make this button
+ *      submit the form.)
+ *   4. The delete button's accessible name includes the task title,
+ *      so a screen-reader user navigating a list of Delete buttons
+ *      can distinguish them. (Implemented; the `aria-label` is
+ *      `Delete task: <title>`.)
+ *   5. The delete button carries a per-action `data-cy` so tests
+ *      can target it. (Implemented; `TASK_CARD_SELECTORS.delete`.)
  *
  * @module views/taskCard
  */
@@ -44,8 +85,17 @@ import { el } from '../utils/dom.js';
 /**
  * The task card's contracted `data-cy` values.
  *
- * Exported so tests can reference the exact same strings the view writes.
- * The naming convention follows the register: `task-card-<field>`.
+ * Exported so tests can reference the exact same strings the view
+ * writes. The naming convention follows the register:
+ * `task-card-<field>` for user fields, `task-card-<action>` for
+ * actions.
+ *
+ * A future change that renamed a selector (e.g., `'task-card-edit'`
+ * → `'edit-button'`) would be a change to this constant AND to
+ * every test that queries `[data-cy="task-card-edit"]`. The constant
+ * makes the view one edit; the tests are the other edit. That is the
+ * intended friction: a selector rename is a real contract change and
+ * should not happen silently.
  */
 export const TASK_CARD_SELECTORS = Object.freeze({
   card: 'task-card',
@@ -77,6 +127,14 @@ export function renderTaskCard(task) {
   const description = normaliseText(task.description);
   const hasDescription = description.length > 0;
 
+  // The title is normalised once and reused for the h2 text, the
+  // edit button's aria-label, and the delete button's aria-label.
+  // Normalising once means a trailing space in the stored title does
+  // not survive into any of the three places — the visible heading,
+  // the edit label, and the delete label all show the same value
+  // the user will see in the h2.
+  const title = normaliseText(task.title);
+
   return el('article', {
     class: 'task-card',
     dataset: {
@@ -87,11 +145,12 @@ export function renderTaskCard(task) {
     el('h2', {
       class: 'task-card__title',
       dataset: { cy: TASK_CARD_SELECTORS.title },
-    }, normaliseText(task.title)),
+    }, title),
 
     // If the description is empty/whitespace, the element is omitted
-    // entirely. Rendering an empty <p> leaves an unexplained gap in the
-    // layout. Hiding it is the honest representation of "no description".
+    // entirely. Rendering an empty <p> leaves an unexplained gap in
+    // the layout. Hiding it is the honest representation of "no
+    // description".
     hasDescription
       ? el('p', {
           class: 'task-card__description',
@@ -120,6 +179,22 @@ export function renderTaskCard(task) {
     ]),
 
     el('div', { class: 'task-card__actions' }, [
+      // The Edit button.
+      //
+      // `type="button"` prevents accidental form submission if a
+      // future change wraps the card in a `<form>`.
+      //
+      // `data-action="edit-task"` is the dispatch key the app's
+      // delegated click handler matches.
+      //
+      // `data-task-id` on the button is the *primary* value the
+      // delegation reads; the card's own `data-task-id` is the
+      // fallback via `closest('[data-task-id]')` if a future
+      // change removed the button's attribute.
+      //
+      // `aria-label` includes the task title so a screen-reader
+      // user can distinguish this Edit button from the others in
+      // the list.
       el('button', {
         type: 'button',
         class: 'task-card__action task-card__action--edit',
@@ -128,9 +203,21 @@ export function renderTaskCard(task) {
           taskId: String(task.id),
           cy: TASK_CARD_SELECTORS.edit,
         },
-        'aria-label': `Edit task: ${normaliseText(task.title)}`,
+        'aria-label': `Edit task: ${title}`,
       }, 'Edit'),
 
+      // The Delete button.
+      //
+      // Same discipline as the Edit button. The `aria-label`
+      // including the task title is not optional — a delete button
+      // whose accessible name is just "Delete" is one of the most
+      // common a11y bugs in list UIs, and it is the delete workflow's
+      // job to not reintroduce it.
+      //
+      // The button does not open the delete dialog itself; it emits
+      // a click with `data-action="delete-task"` and the app's
+      // handler opens the dialog. The card is a display component;
+      // it does not own the confirmation flow.
       el('button', {
         type: 'button',
         class: 'task-card__action task-card__action--delete',
@@ -139,7 +226,7 @@ export function renderTaskCard(task) {
           taskId: String(task.id),
           cy: TASK_CARD_SELECTORS.delete,
         },
-        'aria-label': `Delete task: ${normaliseText(task.title)}`,
+        'aria-label': `Delete task: ${title}`,
       }, 'Delete'),
     ]),
   ]);
@@ -181,14 +268,16 @@ function formatCreatedAt(isoString) {
   if (typeof isoString !== 'string') return '';
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return isoString;
-  
+
   try {
     return new Intl.DateTimeFormat(undefined, {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(date);
   } catch {
-    // Fallback in case `Intl` is unavailable (e.g., very old environments)
+    // Fallback in case `Intl` is unavailable (e.g., very old
+    // environments). Returning the raw string is better than
+    // throwing — the card still renders.
     return isoString;
   }
 }

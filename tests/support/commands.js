@@ -1,21 +1,29 @@
 /**
- * Custom Cypress commands — setup helpers only.
+ * Custom Cypress commands — setup helpers, plus the dialog-Esc helper.
  *
  * Two categories, and the line between them is the whole policy:
  *
- *   SETUP HELPERS (this file) prepare the state the test starts from.
- *   They may assert that the state they prepared is now observable.
- *   They may not assert anything the test is claiming.
+ *   SETUP HELPERS prepare the state the test starts from. They may
+ *   assert that the state they prepared is now observable. They may
+ *   not assert anything the test is claiming.
  *
  *   USER ACTIONS (in specs) click, type, and submit. They belong in
  *   the spec, where the reading shows them. A helper that performs a
  *   user action is a helper that hides the action from the reader.
  *
- * The one-sentence rule:
+ * The one-sentence rule for setup helpers:
  *
  *   **The helper proves the precondition; the spec proves the claim.**
  *
- * Why "zero assertions" was wrong, and what replaced it:
+ * The one-sentence rule for the Esc helper (a different category —
+ * see its docstring):
+ *
+ *   **The helper fires the event the app listens for; the spec
+ *   asserts the app's response.**
+ *
+ * Why "zero assertions" was wrong for setup helpers, and what
+ * replaced it:
+ *
  *   The delivered version said setup helpers must contain zero
  *   assertions. That rule was written to keep helpers from making
  *   the spec's claims — a good instinct. But it also forbade the
@@ -40,7 +48,39 @@
  *     delivery's "zero" was a blanket ban; the replacement is
  *     "exactly the helper's contract, nothing the spec is claiming."
  *
- * The mechanism — `cy.visit('/', { onBeforeLoad })`:
+ * Why the Esc helper exists (a third category)
+ *
+ *   `cy.type('{esc}')` dispatches a synthetic `keydown` event with
+ *   `key: 'Escape'`. The browser's native modal-close behaviour is
+ *   driven by the UA's real-Escape-key handler, not by a synthetic
+ *   keydown — so a Cypress `{esc}` does NOT fire the `<dialog>`'s
+ *   `cancel` event. The dialog stays open; the test times out.
+ *
+ *   The dialog's own code listens for `cancel` (the event the
+ *   browser fires on real Escape). `cy.escDialog` fires that same
+ *   event, one step removed from the browser's keyboard pipeline.
+ *   The app's code path is identical; only the trigger is
+ *   synthetic. The helper reproduces the browser's full Esc
+ *   sequence:
+ *
+ *     1. Fire `cancel` on the dialog.
+ *     2. If the dialog's handler did not call `preventDefault()`,
+ *        call the dialog's native `close()` (which fires `close`).
+ *     3. The app's `close` listener notifies.
+ *
+ *   This is a *test-environment* fix, not an *app* fix. The app's
+ *   Esc handling is correct — a real user pressing a real Escape
+ *   key closes the dialog. Cypress's inability to fire a real
+ *   Escape key is a limitation of the test harness, not a defect
+ *   in the app. The helper bridges the gap.
+ *
+ *   Do NOT patch the app to listen for `keydown` on Escape in
+ *   addition to `cancel`. That would introduce a duplicate close
+ *   path, break the single-cancel-path discipline the dialog is
+ *   built on, and fail the idempotence guarantee.
+ *
+ * The seed mechanism — `cy.visit('/', { onBeforeLoad })`:
+ *
  *   `onBeforeLoad` runs after the document exists and before the
  *   app's first script. The seed is in localStorage before startup
  *   reads it, so the app hydrates FROM the seed rather than being
@@ -55,9 +95,10 @@
  * actual key without the config test failing first.
  *
  * What this file does not do:
- *   - Assert the spec's claims. The trailing assertions here are the
- *     helper's contract ("the seed is rendered"), not the spec's
- *     ("a second task can be created when one already exists").
+ *   - Assert the spec's claims. The trailing assertions in the setup
+ *     helpers are the helper's contract ("the seed is rendered"),
+ *     not the spec's ("a second task can be created when one
+ *     already exists").
  *   - Click, type, or navigate for the user. Those are user actions;
  *     they belong in the spec where the reading can show them.
  *   - Seed state that only one spec needs. That state belongs in the
@@ -77,6 +118,10 @@
  *     proves the claim" line — the spec's assertion belongs in the
  *     spec.
  *   - cy.login: the app has no authentication.
+ *   - cy.clickWithRetry / cy.clickWhenReady: workarounds for flake,
+ *     not helpers. The flake fix belongs in the cause (seeds via
+ *     onBeforeLoad, listeners attached after render), not in the
+ *     click.
  *
  * Conventions for a future setup helper:
  *   1. Name it for the state it prepares (`seedTasks`, not `doSetup`).
@@ -263,4 +308,118 @@ Cypress.Commands.add('seedCorruptStorage', (payload) => {
   // The recovery outcome. `seedRawStorage` already proved the app
   // started; this proves it recovered to the empty state.
   cy.get('[data-cy="empty-state"]').should('be.visible');
+});
+
+/**
+ * Fire the browser's `cancel` + `close` sequence on a `<dialog>`, so a
+ * test can exercise the dialog's Esc-close path without relying on
+ * Cypress's synthetic keyboard events.
+ *
+ * Why this helper exists
+ * ----------------------
+ *
+ * Cypress's `cy.type('{esc}')` dispatches a synthetic `keydown` with
+ * `key: 'Escape'`. The browser's native modal-close behaviour is
+ * driven by the UA's real-Escape-key handler, not by a synthetic
+ * keydown — so a Cypress `{esc}` does NOT fire the `<dialog>`'s
+ * `cancel` event. The dialog stays open; the test times out with
+ * "Expected <dialog> not to exist, but it was continuously found."
+ *
+ * That is a limitation of the test harness, not a defect in the
+ * app. A real user pressing a real Escape key closes the dialog.
+ * This helper bridges the gap by firing the same events the browser
+ * would fire:
+ *
+ *   1. Fire `cancel` on the dialog. The app's cancel handler runs.
+ *      It either calls `preventDefault()` (an in-flight save — the
+ *      dialog should not close) or lets the default through.
+ *   2. If the cancel was NOT prevented, call the dialog's native
+ *      `close()`. In a real browser the UA does this automatically
+ *      after the cancel; in jsdom and in Cypress, it must be called
+ *      explicitly. The close fires the `close` event, which the
+ *      app's `close` listener uses to notify.
+ *
+ * What this helper is NOT
+ * -----------------------
+ *
+ *   - Not a replacement for clicking Cancel. Cancel is a button
+ *     click; the button's handler is different (it calls `close()`
+ *     itself, then `onCancel()`). The Esc path relies on the
+ *     `close` listener. Two paths, two tests, two helpers (the
+ *     click is a `cy.get(...).click()`, the Esc is this helper).
+ *
+ *   - Not a test-environment shim to add to the app. The app
+ *     should NOT add a `keydown` listener for Escape in addition
+ *     to the native `cancel` handler. That would introduce a
+ *     duplicate close path, break the single-cancel-path
+ *     discipline, and fail the idempotence guarantee. The helper
+ *     fires the event the app already listens for; the app does
+ *     not need to listen for more.
+ *
+ *   - Not a claim the helper is making. The spec asserts the
+ *     dialog is gone, the store is unchanged, focus is restored.
+ *     The helper fires the events; the spec asserts the outcome.
+ *
+ * Assertions
+ * ----------
+ *
+ * The helper asserts one thing: the dialog exists and is open before
+ * the Esc sequence is fired. That is the helper's contract: "I
+ * fired Esc on an open dialog." A caller who calls `escDialog` on a
+ * closed dialog has a bug; this assertion surfaces it as "the
+ * dialog was already closed," not as a silent no-op.
+ *
+ * The spec asserts everything else.
+ *
+ * @param {string} selector - a CSS selector for the dialog element.
+ *
+ * @example
+ *   cy.get('[data-cy="dashboard-create"]').click();
+ *   cy.get('.task-dialog').should('exist');
+ *   cy.escDialog('.task-dialog');
+ *   cy.get('.task-dialog').should('not.exist');
+ *
+ * @example
+ *   // Same pattern for the delete and clear-all dialogs.
+ *   cy.get('[data-cy="task-card-delete"]').first().click();
+ *   cy.get('.delete-dialog').should('exist');
+ *   cy.escDialog('.delete-dialog');
+ *   cy.get('.delete-dialog').should('not.exist');
+ *
+ * Admission: 4 specs use it (create, edit, delete, clear-all).
+ */
+Cypress.Commands.add('escDialog', (selector) => {
+  cy.get(selector).should('exist').then(($dialog) => {
+    const dialogEl = $dialog[0];
+
+    // The helper's contract. A closed dialog does not fire `cancel`;
+    // a caller who reaches this point with a closed dialog has a
+    // spec bug, and this assertion names it clearly.
+    expect(dialogEl.open, `${selector} must be open before cy.escDialog`).to.equal(true);
+
+    // Step 1: fire `cancel`. Capture whether the app's handler
+    // called `preventDefault()` — if it did, the browser would not
+    // close the dialog, and neither should this helper.
+    let defaultPrevented = false;
+    const cancelEvent = new window.Event('cancel', {
+      bubbles: true,
+      cancelable: true,
+    });
+    const originalPreventDefault = cancelEvent.preventDefault.bind(cancelEvent);
+    cancelEvent.preventDefault = function () {
+      defaultPrevented = true;
+      originalPreventDefault();
+    };
+    dialogEl.dispatchEvent(cancelEvent);
+
+    // Step 2: if the cancel was not prevented, the browser closes
+    // the dialog natively. In jsdom and Cypress, that native close
+    // does not happen automatically after a synthetic `cancel`
+    // event — the `close()` must be called explicitly. The close
+    // fires the `close` event, which the app's `close` listener
+    // uses to notify the app.
+    if (!defaultPrevented && dialogEl.open) {
+      dialogEl.close();
+    }
+  });
 });

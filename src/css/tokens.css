@@ -416,14 +416,24 @@
    * below. Declared as a token-shaped declaration so the value lives with
    * the palette rather than in a separate file.
    * ------------------------------------------------------------------------- */
-  color-scheme: dark; /* UA controls adopt dark styling.                             [source: derived] */
+  color-scheme: dark; /* UA controls adopt dark styling.
   /* The transient notification layer. Sits above the header (a
     * toast is "more important" than the header's contents because
     * the header is informational and the toast is a response to an
     * action), but below the modal layer (a dialog covers the page;
     * a toast is an aside). The value is the next number on the
     * ladder above --z-header. */
-  --z-toast: 20; /* Toast notifications.                          [source: derived] */
+  --z-toast: 20; /* Toast notifications.
+
+  /* The danger role's hover state. The delete-dialog's confirm
+    * button uses this when the user hovers over it. It is a slightly
+    * darker shade of --color-danger so the button reads as "yes,
+    * this button is active" without being so different that it
+    * becomes a different colour. The change is deliberate: a
+    * destructive button that does not respond to hover looks dead;
+    * one that changes to a bright red on hover looks eager. The
+    * middle is the right register. */
+  --color-danger-hover: #b91c1c;
 }
 
 /* =============================================================================
