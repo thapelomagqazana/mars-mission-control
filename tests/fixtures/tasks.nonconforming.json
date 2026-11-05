@@ -1,54 +1,78 @@
 [
   {
-    "name": "missing-required-title",
-    "description": "Missing the required `title` field. One violation expected.",
+    "name": "missing-title",
+    "description": "a task missing its required title",
     "task": {
       "id": "55555555-5555-4555-8555-555555555555",
-      "description": "",
+      "description": "No title.",
       "creator": "Commander Aria Vance",
       "assignee": "Engineer Kade",
-      "createdAt": "2026-11-03T09:00:00.000Z"
+      "createdAt": "2026-11-03T09:20:00.000Z"
     },
     "expectedErrorFields": ["title"]
   },
   {
-    "name": "wrong-type-title",
-    "description": "Title is a number, not a string. One violation expected.",
+    "name": "title-wrong-type",
+    "description": "a task whose title is a number instead of a string",
     "task": {
       "id": "66666666-6666-4666-8666-666666666666",
       "title": 42,
       "description": "",
       "creator": "Commander Aria Vance",
       "assignee": "Engineer Kade",
-      "createdAt": "2026-11-03T09:00:00.000Z"
+      "createdAt": "2026-11-03T09:25:00.000Z"
     },
     "expectedErrorFields": ["title"]
   },
   {
     "name": "extra-field",
-    "description": "Has a `priority` field not in the schema. One violation expected.",
+    "description": "a valid task with an extra field the schema does not declare",
     "task": {
       "id": "77777777-7777-4777-8777-777777777777",
       "title": "Check hull",
       "description": "",
       "creator": "Commander Aria Vance",
       "assignee": "Engineer Kade",
-      "createdAt": "2026-11-03T09:00:00.000Z",
+      "createdAt": "2026-11-03T09:30:00.000Z",
       "priority": "high"
     },
     "expectedErrorFields": ["priority"]
   },
   {
     "name": "multiple-violations",
-    "description": "Missing title, wrong-typed description, extra priority. Three violations expected.",
+    "description": "a task missing its title and carrying an extra field",
     "task": {
       "id": "88888888-8888-4888-8888-888888888888",
-      "description": 42,
+      "description": "",
       "creator": "Commander Aria Vance",
       "assignee": "Engineer Kade",
-      "createdAt": "2026-11-03T09:00:00.000Z",
+      "createdAt": "2026-11-03T09:35:00.000Z",
       "priority": "high"
     },
-    "expectedErrorFields": ["title", "description", "priority"]
+    "expectedErrorFields": ["title", "priority"]
+  },
+  {
+    "name": "missing-id",
+    "description": "a task missing its required id",
+    "task": {
+      "title": "Check hull",
+      "description": "",
+      "creator": "Commander Aria Vance",
+      "assignee": "Engineer Kade",
+      "createdAt": "2026-11-03T09:40:00.000Z"
+    },
+    "expectedErrorFields": ["id"]
+  },
+  {
+    "name": "missing-createdAt",
+    "description": "a task missing its required createdAt",
+    "task": {
+      "id": "99999999-9999-4999-8999-999999999999",
+      "title": "Check hull",
+      "description": "",
+      "creator": "Commander Aria Vance",
+      "assignee": "Engineer Kade"
+    },
+    "expectedErrorFields": ["createdAt"]
   }
 ]

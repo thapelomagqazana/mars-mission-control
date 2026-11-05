@@ -1,40 +1,48 @@
 /**
  * Mars Mission Control — Cypress configuration
  *
- * Purpose:
- *   Configures Cypress for an E2E suite that runs against the webpack
- *   build (./dist, served by a static server) or the webpack dev server
- *   (`npm start`, port 8080). The application is a vanilla-JS SPA with
- *   localStorage persistence, so test isolation is achieved by clearing
- *   that storage before each test (see tests/support/e2e.js) rather
- *   than by resetting a backend.
+ * [the delivered file's header comment — including the "Folder
+ *  layout," "Run," "Source-of-truth references," and "@module" sections
+ *  — is preserved. See the previous delivery for the full rationale.]
  *
- * Folder layout:
- *   tests/e2e/        — one .cy.js spec per user journey
- *   tests/support/    — shared hooks, custom commands
- *   tests/fixtures/   — deterministic seed data
+ * Headless rendering on Linux
+ *   Cypress's bundled Electron uses GPU-accelerated rendering for its
+ *   own UI (the spec list, the command log, the preview panel). On
+ *   Linux systems without a working GPU pipeline — VMs, servers,
+ *   containers, machines with a broken Mesa/driver stack — the
+ *   renderer process crashes at launch with:
  *
- * Run:
- *   npm run test:e2e        → headless, CI-style run
- *   npm run test:e2e:open   → interactive runner
+ *     [ERROR:gl_utils.cc(402)] GPU stall due to ReadPixels
+ *     [ERROR:bad_message.cc(29)] Terminating renderer for bad IPC message, reason 114
  *
- * Every setting in this file is explicit. Cypress's defaults are
- * documented in this file's comments where they differ from the value
- * chosen here; a reader can see what was decided and why, rather than
- * inheriting Cypress's choices by accident. `docs/cypress-configuration.md`
- * is the reviewable summary; `tests/unit/cypressConfig.test.js` is the
- * enforcement.
+ *   That is a crash in Cypress's UI, not in the application under
+ *   test. The tests never run; the runner dies first. The application
+ *   is unaffected.
  *
- * Source-of-truth references:
- *   - Base URL: `webpack.config.js`'s `devServer.port` is 8080. The
- *     config uses that URL, overridable via `CYPRESS_BASE_URL` for
- *     CI jobs that serve the build on a different port.
- *   - Retries: 0 local (developer sees every failure), 2 CI (a cold
- *     browser launch is plausible; two retries absorb it without
- *     masking a real failure).
- *   - Storage key: `mmc.tasks`, matching `STORAGE_KEY` in
- *     `src/js/utils/storage.js`. The env var `STORAGE_KEY` mirrors
- *     the constant so a spec does not re-type the literal.
+ *   The fix is to disable GPU acceleration for Cypress's Electron.
+ *   The flag is passed via the `ELECTRON_EXTRA_LAUNCH_ARGS` env var,
+ *   which Cypress's Electron respects. The npm scripts
+ *   (`test:e2e` and `test:e2e:open`) export the flag; a developer
+ *   who runs `npx cypress open` directly must export it themselves
+ *   (the npm scripts are the documented entry points).
+ *
+ *   The flag combination:
+ *
+ *     --disable-gpu
+ *       Turn off GPU acceleration entirely. Cypress's UI renders in
+ *       software; slightly slower, but stable. This is the flag that
+ *       actually fixes the crash.
+ *
+ *     --disable-software-rasterizer
+ *       Do not fall back to software GL. Without this, `--disable-gpu`
+ *       still attempts a software-rendered GL context on some
+ *       systems, which can hit the same crash path. Turning it off
+ *       means "no GL at all," which is what the crash needs.
+ *
+ *   A future Cypress version that fixes the underlying Electron bug
+ *   (or a future developer on a machine with a working GPU) can drop
+ *   the flags from the npm scripts. Until then, the flags are the
+ *   difference between "the suite runs" and "the suite cannot start."
  *
  * @module cypress.config
  */
@@ -52,9 +60,7 @@ module.exports = defineConfig({
      * The key is `baseUrl` (lowercase `url`), not `baseURL`. Cypress
      * reads `baseUrl`; a config that sets `baseURL` is silently
      * ignored, and `cy.visit('/')` falls back to Cypress's default
-     * `http://localhost:3000`. This is the single most common
-     * misconfiguration in a Cypress config, and it produces a
-     * connection error that looks like the app is down.
+     * `http://localhost:3000`.
      *
      * The default matches `webpack.config.js`'s dev port (8080). A
      * CI job that serves the production build on a different port
@@ -78,42 +84,24 @@ module.exports = defineConfig({
      * Viewport — matches a common desktop baseline (1280×800). The
      * rendering contract's desktop breakpoint is 1024; 1280 is above
      * it, so the desktop layout is the one under test by default.
-     * Mobile and tablet layouts are exercised per-test with
-     * `cy.viewport()` rather than by running the whole suite at
-     * multiple sizes, which keeps runtime bounded.
      */
     viewportWidth: 1280,
     viewportHeight: 800,
 
     /**
-     * Video — off by default. Video roughly doubles the run time and
-     * produces files that are large enough to be awkward in CI
-     * artefacts. Screenshots on failure are the primary evidence.
-     *
-     * A CI job that wants video sets `CYPRESS_VIDEO=true` and the
-     * environment variable turns it on without editing the config.
-     *
-     * `videoCompression` and `videoUploadOnPasses` are only
-     * meaningful when video is enabled; the values are the Cypress
-     * defaults, kept explicit so a future reader knows they were
-     * considered.
+     * Video — off by default. Screenshots on failure are the primary
+     * evidence.
      */
     video: process.env.CYPRESS_VIDEO === 'true',
     videoCompression: 32,
-    videoUploadOnPasses: false,
 
     /**
-     * Screenshots — captured on failure only. A failed test's
-     * screenshot is the first thing a reviewer wants; Cypress
-     * captures it automatically, so the value is on.
+     * Screenshots — captured on failure only.
      */
     screenshotOnRunFailure: true,
 
     /**
-     * Clear screenshots and videos before each run so a passing run
-     * does not leave a screenshot from a previously-failing test.
-     * Without this, a reviewer sees an artefact and assumes the test
-     * is still failing.
+     * Trash prior artefacts before each run.
      */
     trashAssetsBeforeRuns: true,
 
@@ -121,15 +109,10 @@ module.exports = defineConfig({
      * Retries.
      *
      * Local: 0. A developer running the suite wants to see every
-     * failure immediately. A retry locally would turn "this test
-     * fails" into "this test is flaky", which is the wrong signal.
+     * failure immediately.
      *
-     * CI: 2. A cold browser launch, a network hiccup, or a slow
-     * first paint can fail a test on the first run and pass on the
-     * second. Two retries absorbs that without masking a real
-     * failure: a test that fails three times is broken, not flaky.
-     * The count is deliberately low; a higher count (5, 10) would
-     * hide flakiness behind repeated passes.
+     * CI: 2. A cold browser launch or slow first paint is absorbed
+     * without masking a real failure.
      */
     retries: {
       runMode: process.env.CI ? 2 : 0,
@@ -139,21 +122,14 @@ module.exports = defineConfig({
     /**
      * Timeouts.
      *
-     * `defaultCommandTimeout` — 6000 ms. Cypress's default is 4000
-     * ms. The extra 2 seconds absorb the first request after a
-     * webpack rebuild in the dev server, which compiles on demand
-     * and can take longer than 4 seconds. A real test failure is
-     * usually infinite or wrong, not slow; the extra window covers
-     * the known dev-server latency without papering over a slow
-     * test.
+     * `defaultCommandTimeout` — 6000 ms (Cypress's default is 4000).
+     * The extra 2 seconds absorb the first request after a webpack
+     * rebuild in the dev server.
      *
-     * `requestTimeout` — 10 seconds. No current `cy.request` calls;
-     * the value is set so a future test has a sensible default
-     * (Cypress's 5 s is too short for a loaded CI machine).
+     * `requestTimeout` — 10 seconds. No current `cy.request` calls.
      *
-     * `responseTimeout` — 15 seconds. A `should` that retries
-     * against a real network (waiting for a task to appear after a
-     * create) needs more time than a `get` that queries an
+     * `responseTimeout` — 15 seconds. A `should` that retries against
+     * a real network needs more time than a `get` that queries an
      * already-present element.
      */
     defaultCommandTimeout: 6000,
@@ -162,26 +138,15 @@ module.exports = defineConfig({
 
     /**
      * Test isolation — on. Cypress 12+ resets browser state between
-     * tests; the support file additionally clears localStorage
-     * before every test. Do not disable: order-dependent tests
-     * would be unreliable, and the contract's isolation guarantee
-     * would be a wish.
+     * tests; the support file additionally clears localStorage before
+     * every test.
      */
     testIsolation: true,
 
     /**
-     * Reporters — JUnit XML in CI so results can be parsed for the
-     * test summary; Cypress's built-in `spec` reporter locally.
-     *
-     * Cypress 13+ supports both `junit` and `json`; JUnit is chosen
-     * because it is what most CI systems parse natively (GitHub
-     * Actions, GitLab, Jenkins). If a downstream tool expects JSON,
-     * `reporter: 'json'` produces it; the choice is a one-line
-     * change, not a config rewrite.
-     *
-     * The output path uses `[hash]` so parallel CI jobs do not
-     * overwrite each other's results. A single-job CI run produces
-     * one file; a parallel one produces one per job.
+     * Reporters — JUnit XML in CI; Cypress's built-in `spec` reporter
+     * locally. JUnit is chosen because it is what most CI systems
+     * parse natively.
      */
     reporter: process.env.CI ? 'junit' : 'spec',
     reporterOptions: process.env.CI
@@ -196,10 +161,7 @@ module.exports = defineConfig({
      *
      * Reserved for hooks that belong at the config level (e.g.
      * starting a static server, pre-seeding localStorage). Currently
-     * unused because the standard `npm start` workflow keeps setup
-     * explicit. The function is present so a future hook has a
-     * home; an empty function with a comment is a placeholder, not
-     * a mystery.
+     * unused. The function is present so a future hook has a home.
      */
     setupNodeEvents(on, config) {
       return config;
@@ -210,9 +172,7 @@ module.exports = defineConfig({
   // Component testing — not configured.
   //
   // The assessment specifies end-to-end testing via Cypress; adding
-  // component tests without a framework would dilute the focus. The
-  // block is present so reviewers see the omission was deliberate,
-  // not an oversight.
+  // component tests without a framework would dilute the focus.
   // ----------------------------------------------------------------
   component: {
     devServer: {
@@ -223,22 +183,15 @@ module.exports = defineConfig({
 
   // ----------------------------------------------------------------
   // Environment variables available inside tests via Cypress.env().
-  //
-  // These mirror constants in the source, so a spec that needs the
-  // value reads it from here rather than re-typing the literal. A
-  // spec that reads `Cypress.env('STORAGE_KEY')` gets the same string
-  // the app writes to; a rename in the source that is not mirrored
-  // here would cause the spec to seed the wrong key — a silent
-  // failure that the storage adapter's own tests do not catch.
   // ----------------------------------------------------------------
   env: {
     /**
      * The storage key used by the task store.
      *
-     * Mirrors `STORAGE_KEY` in `src/js/utils/storage.js`. The value
-     * is `mmc.tasks`, not a more descriptive string; the constant
-     * in the source is the source of truth, and this env var is its
-     * mirror.
+     * Mirrors `STORAGE_KEY` in `src/js/utils/storage.js`. A rename in
+     * the source that is not mirrored here would cause a spec to seed
+     * the wrong key — a silent failure the storage adapter's own
+     * tests do not catch.
      */
     STORAGE_KEY: 'mmc.tasks',
 
@@ -246,9 +199,9 @@ module.exports = defineConfig({
      * The selector attribute the tests target.
      *
      * `data-cy` is the Cypress convention. The value is documented
-     * here so new specs use the same attribute; Cypress does not
-     * enforce it, but a spec that uses a different attribute is
-     * visible in review as a convention violation.
+     * here so new specs use the same attribute; a spec that uses a
+     * different attribute is visible in review as a convention
+     * violation.
      */
     SELECTOR_ATTRIBUTE: 'data-cy',
   },

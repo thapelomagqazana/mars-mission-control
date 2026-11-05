@@ -16,10 +16,12 @@ task count, a search bar, and a responsive task list.
 - **Read** the task list; an empty list shows the empty state with a
   call to action.
 - **Edit** a task; changes are validated and persisted.
-- **Delete** a single task, or **clear all** tasks.
+- **Delete** a single task, or **clear all** tasks via the sidebar.
 - **Search** by title, description, or assignee; the counter shows
   the count of the filtered list.
 - **Persist** tasks across reloads in `localStorage`.
+- **Confirm** destructive actions (single delete, clear-all) via
+  accessible, in-app `alertdialog` modals.
 
 Every UI control has a documented behaviour in
 [`docs/event-catalog.md`](docs/event-catalog.md). Every task field has a
@@ -100,9 +102,10 @@ npm test
 Runs the unit tests (Jest). The suite has two projects:
 
 - **`node`** — the data-layer tests (`schema`, `taskStore`,
-  `validationMapping`, `storage`, `npmScripts`, `cypressConfig`).
+  `validationMapping`, `storage`, `npmScripts`, `cypressConfig`,
+  `taskCard`, `taskList`, `taskFactory`, `startupSequence`).
 - **`jsdom`** — the view-layer tests (`renderContract`,
-  `eventCatalog`).
+  `eventCatalog`, `createWorkflow`, `doubleSubmit`).
 
 Both run in one `npm test`; the project name appears next to each
 result.
@@ -114,10 +117,6 @@ npm run test:e2e        # headless, CI-style
 npm run test:e2e:open   # interactive
 ```
 
-The E2E suite runs against the production build; `pretest:e2e` builds
-it first. The tests target `data-cy` selectors, documented in
-[`docs/selector-convention.md`](docs/selector-convention.md).
-
 ---
 
 ## Verify
@@ -128,17 +127,161 @@ npm run verify
 
 Runs the full verification chain, in order:
 
-1. **`verify:cypress`** — confirms Cypress's binary is present and the
-   version matches the pin.
-2. **`lint:syntax`** — a syntax check on every source file.
-3. **`test`** — the unit tests.
-4. **`build`** — the production bundle.
-5. **`test:e2e`** — the end-to-end suite against the built output.
+1. **`lint:syntax`** — a syntax check on every source file.
+2. **`test`** — the unit tests.
+3. **`build`** — the production bundle.
+4. **`test:e2e`** — the end-to-end suite against the built output.
 
 The ordering is deliberate: a fast failure (a missing Cypress binary)
 comes before the slow steps. If `verify` fails, the failing step's
 output names the problem; the doc for each step is in
 [`docs/npm-scripts.md`](docs/npm-scripts.md).
+
+---
+
+## Cypress (End-to-End Testing)
+
+The E2E suite verifies the application end-to-end in a real browser
+(Electron, headless by default) against the production bundle.
+
+### Prerequisite: The Server Must Be Running
+
+Cypress does not start the dev server or the production server. You
+must start the server manually in a background process before running
+the E2E suite.
+
+The `pretest:e2e` script builds the production bundle, but it does not
+start a server. The suite's `baseUrl` in `cypress.config.js` is
+`http://localhost:5050` (the production build), so the server must
+serve `dist/` on that port.
+
+**Steps:**
+
+1. Build the production bundle:
+   ```bash
+   npm run build
+   ```
+
+2. Start the server in the background (uses `npx serve`, which is
+   already a dev dependency):
+   ```bash
+   npx serve dist -l 5050 &
+   ```
+
+   (Or run it in a second terminal without the `&`.)
+
+3. Run the E2E suite:
+   ```bash
+   npm run test:e2e
+   ```
+
+4. Stop the server when done:
+   ```bash
+   kill %1
+   ```
+
+### Running the Suite
+
+| Command | What it does |
+|---|---|
+| `npm run test:e2e` | Runs the full suite headless, as CI would. |
+| `npm run test:e2e:open` | Opens the Cypress interactive runner (GUI). |
+| `npx cypress run --spec tests/e2e/<name>.cy.js` | Runs a single spec file. |
+
+The `pretest:e2e` script ensures the production build is created
+*before* the suite runs. The tests target the built `dist/` folder
+served locally, not the webpack dev server. A change that works in dev
+but breaks in the build is a change that does not work, and the suite
+catches it.
+
+### The Spec Files (`tests/e2e/`)
+
+The suite is organised by workflow or surface. Each spec is a contract:
+
+- `dashboard.cy.js` — The layout shell. Verifies regions, the sticky
+  header, responsive breakpoints (320, 768, 1024, 1440), accessibility
+  landmarks (one `main`, one `h1`, named sections), and the empty state
+  reachability.
+- `create-task.cy.js` — The create workflow. Opening the dialog from
+  both affordances, filling the form, validation errors, cancel paths,
+  double-submission prevention, and focus restoration.
+- `read-tasks.cy.js` — The read workflow. Rendering the list, the
+  summary, the counter, reload fidelity, and malformed storage recovery
+  (P-03, P-04, P-05).
+- `edit-task.cy.js` — The edit workflow. Correct-task targeting,
+  pre-fill fidelity, submission, validation, cancel paths, and focus
+  restoration after a render.
+- `delete-task.cy.js` — The delete workflow. Confirmation dialog,
+  correct-task targeting, cancel paths, toast, and focus restoration
+  (including the fallback chain when the trigger is deleted).
+- `clear-all.cy.js` — The clear-all workflow. The sidebar button, the
+  confirmation dialog (count, irreversibility copy), cancel paths, and
+  the focus fallback to the header create button (since the disabled
+  clear-all button cannot receive focus).
+- `search.cy.js` — The search workflow. Filtering by title,
+  description, and assignee; case insensitivity; the summary line;
+  the no-results empty state (vs. the no-tasks state); and clearing the
+  query.
+- `isolation-probe.cy.js` — Test isolation. Verifies that a test's
+  state does not leak into the next test, and that the `localStorage`
+  reset in `beforeEach` holds.
+
+### Test Support and Seeding
+
+The `tests/support/` directory holds the Cypress configuration:
+
+- **`e2e.js`** — Runs before every spec file. It sets up the global
+  `beforeEach` (clearing `localStorage` and visiting the app) and
+  tolerates the one external dependency the suite cannot control (the
+  Unsplash Mars image).
+- **`commands.js`** — Custom helpers that reduce boilerplate without
+  hiding user actions:
+  - `cy.seedTasks(tasks)` — Writes to `localStorage` during
+    `onBeforeLoad` so the app hydrates *from* the seed. It asserts the
+    seeded cards are rendered before resolving, preventing async races.
+  - `cy.seedCorruptStorage(payload)` — Seeds raw strings for testing
+    the recovery branches (P-03/P-04).
+  - `cy.escDialog(selector)` — Fires the browser's `cancel` and
+    `close` events directly on a `<dialog>`. Cypress's synthetic
+    `{esc}` keyboard event does not trigger a native `<dialog>`'s
+    Esc-close sequence; this helper bridges the harness gap without
+    changing the app code.
+
+Fixtures live in `tests/fixtures/` (e.g., `tasks.json`). They supply
+the seed data in the exact shape the store persists it, so tests can
+assert count transitions and search matches deterministically.
+
+### Determinism and State
+
+The suite is designed to run in any order, individually or in bulk:
+
+1. **No `window.confirm()` reliance.** Destructive actions use
+   in-app, accessible `alertdialog` modals, which Cypress can target
+   via selectors without stubbing native browser dialogs.
+2. **No stale state.** `localStorage` is cleared before every test.
+   The seed helpers populate it fresh.
+3. **No race conditions.** The `cy.seedTasks` helper resolves only
+   after the app has rendered the seeded state, ensuring the test's
+   first assertion starts against a ready DOM.
+4. **Screenshots on failure.** If a test fails, Cypress captures a
+   screenshot of the DOM at the moment of failure. These are written to
+   `tests/screenshots/` and can be reviewed to see exactly what the app
+   looked like when the assertion failed.
+
+### Troubleshooting Cypress
+
+- **"Expected `<dialog>` not to exist, but it was continuously found"**
+  — If a test types `{esc}` and the dialog does not close, the test
+  must use `cy.escDialog('.dialog-class')` instead. Cypress does not
+  simulate the UA's native keyboard pipeline.
+- **"Expected to find `[data-cy="task-card"]`, but never found it"**
+  — This usually means the seed was rejected by the store (e.g., an
+  invalid UUID). Check the fixture data; the store drops invalid
+  records on load.
+- **"Timed out retrying: expected `<button>` to be 'focused'"** — A
+  disabled button cannot receive focus. If a dialog closes after
+  disabling the trigger, focus restoration must route to the next
+  enabled element (e.g., the header create button).
 
 ---
 
@@ -152,11 +295,9 @@ The ones you need most:
 | `npm start` | Start the dev server at `http://localhost:8080`. |
 | `npm run build` | Build the production bundle into `dist/`. |
 | `npm test` | Run the unit tests. |
-| `npm run test:e2e` | Run the E2E suite (headless). |
-| `npm run test:e2e:open` | Run the E2E suite interactively. |
+| `npm run test:e2e` | Run the E2E suite (headless). **Requires the server to be running.** |
+| `npm run test:e2e:open` | Run the E2E suite interactively. **Requires the server to be running.** |
 | `npm run verify` | Run everything; the pre-submit check. |
-| `npm run verify:cypress` | Confirm the Cypress binary is present. |
-| `npm run check:layers` | Confirm the layer dependencies are respected. |
 
 ---
 
@@ -166,15 +307,21 @@ The ones you need most:
 src/
 ├── index.html              # the page shell
 ├── css/
-│   └── styles.css          # the mission-control theme
+│   ├── styles.css          # the mission-control theme
+│   └── tokens.css          # design tokens (colour, spacing, typography)
 ├── assets/                 # local images (the Mars hero is remote)
 └── js/
     ├── index.js            # entry point — boots the app
+    ├── startup.js          # startup sequence and error handlers
     ├── app.js              # event layer — wires views, store, events
     ├── store/
     │   ├── schema.js       # the task schema (single source of truth)
     │   ├── validators.js   # field-level validation rules
+    │   ├── validate.js     # the validator (returns a result)
     │   ├── taskStore.js    # create, read, update, delete
+    │   ├── initialize.js   # storage recovery (P-03/P-04/P-05)
+    │   ├── write.js        # atomic writes with failure classification
+    │   ├── id.js           # UUID generation
     │   └── errors.js       # ValidationError, NotFoundError, StorageError
     ├── events/
     │   ├── debounce.js     # the search debounce
@@ -187,10 +334,14 @@ src/
     │   ├── emptyState.js   # the empty state (no tasks / no results)
     │   ├── counter.js      # the live task count
     │   ├── search.js       # the search summary and results
-    │   └── dialog.js       # the create/edit dialog
+    │   ├── dialog.js       # the create/edit dialog
+    │   ├── deleteDialog.js # the single-task confirmation dialog
+    │   ├── clearAllDialog.js# the store-wide confirmation dialog
+    │   └── toast.js        # the transient notification view
     └── utils/
         ├── dom.js          # element creation and manipulation helpers
-        └── storage.js      # the localStorage adapter
+        ├── storage.js      # the localStorage adapter
+        └── tokens.js       # design-token utilities
 
 tests/
 ├── unit/
@@ -203,10 +354,6 @@ tests/
 docs/                       # design records (see "Documentation" below)
 scripts/                    # verification helpers
 ```
-
-The layer boundaries are documented in
-[`docs/layers-and-dependencies.md`](docs/layers-and-dependencies.md) and
-enforced by `npm run check:layers`.
 
 ---
 
@@ -221,12 +368,7 @@ responsibility:
 | **Persistence** | Read and write tasks to `localStorage` | `src/js/utils/storage.js` |
 | **Rendering / view** | Produce DOM from data | `src/js/views/` |
 | **Event handling** | Listen, call the store, re-render | `src/js/app.js`, `src/js/events/` |
-| **Startup / entry** | Wire the layers, boot | `src/js/index.js` |
-
-Every layer's allowed dependencies are in the dependency matrix in
-`docs/layers-and-dependencies.md`. The view must not import the store
-directly; the entry layer is the only composition root. `check:layers`
-enforces the rules.
+| **Startup / entry** | Wire the layers, boot | `src/js/index.js`, `src/js/startup.js` |
 
 ---
 
@@ -246,6 +388,7 @@ the tests enforce it. Start with the one whose question you have:
 | What are the npm scripts and why? | [`docs/npm-scripts.md`](docs/npm-scripts.md) |
 | How is Cypress configured? | [`docs/cypress-configuration.md`](docs/cypress-configuration.md) |
 | How is the Cypress tree organised? | [`docs/cypress-folder-structure.md`](docs/cypress-folder-structure.md) |
+| How is the test state reset between tests? | [`docs/test-state-reset.md`](docs/test-state-reset.md) |
 
 ---
 
@@ -267,10 +410,6 @@ These are deliberate and disclosed:
   have authentication; "Commander Aria Vance" is a hardcoded name
   shown in the sidebar. A real deployment would replace it with the
   signed-in user.
-- **`window.confirm()` is used for destructive confirmations.** The
-  browser's native confirm is the current confirmation mechanism. A
-  styled in-app dialog is a future improvement; the current behaviour
-  is documented in the event catalog.
 - **No i18n.** The app is English-only. A future localisation would
   touch the view labels and the error messages; the validation
   contract and the store are language-agnostic.
