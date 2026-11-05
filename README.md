@@ -58,18 +58,6 @@ installs from that tree and fails if `package.json` and the lockfile
 disagree. `npm install` may resolve a different tree and reintroduce
 drift.
 
-Cypress downloads its binary on first install. If the download is
-blocked (a corporate proxy, a firewall), `npm ci` still succeeds — the
-npm package installs without the binary. Run:
-
-```bash
-npm run verify:cypress
-```
-
-to confirm the binary is present. A non-zero exit means the download
-did not complete; `npx cypress install` retries it with verbose
-output.
-
 ---
 
 ## Run
